@@ -1,0 +1,27 @@
+version: "3"
+
+services:
+  database:
+    container_name: DataPulseDB
+    image: postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DATABASE: data-pulse-db
+    ports:
+      - 5432:5432
+    volumes:
+      - db:/data/postgres
+    networks:
+      - data-pulse
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+volumes:
+  db:
+networks:
+  data-pulse:
+    driver: bridge
