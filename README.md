@@ -16,3 +16,21 @@
 /migrations/         — Database migrations
 /test/               — Integration and end-to-end tests
 ```
+
+## Reading reqeuest data in chunks
+
+`multipart/form-data` arrives as a stream over the network — the server doesn't receive the full 2 GB (an example) at once and hold it in RAM.
+
+HTTP is built on TCP, which delivers data in small packets. The file you get from r.FormFile() is a reader — it reads from that incoming stream on demand.
+
+So when `io.Copy` does:
+
+1. src.Read(buf) — pulls the next 32 KB from the network stream
+2. dst.Write(buf) — writes that 32 KB to disk
+3. Repeat
+
+At any point, only ~32 KB is in memory. The rest of the 2 GB is either still in transit on the network or already written to disk.
+
+When you use `io.ReadAll(file)` instead, it keeps calling `Read` and accumulating all chunks into a growing byte slice in memory — that's what forces the full 2 GB into RAM.
+
+The data arrives the same way in both cases (as a stream). The difference is whether you keep each chunk in memory or discard it after writing.
