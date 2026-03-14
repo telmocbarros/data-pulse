@@ -3,12 +3,22 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
+)
+
+const (
+	IS_NUMERICAL = "IS_NUMERICAL"
+	IS_BOOLEAN   = "IS_BOOLEAN"
+	IS_DATE      = "IS_DATE"
+	IS_TEXT      = "IS_TEXT"
 )
 
 func main() {
@@ -132,11 +142,53 @@ func uploadDatasetInChunks(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Successfully Uploaded File\n")
 }
 
-func parseCsvFile(f multipart.File) (results [][]string, err error) {
+func parseCsvFile(f multipart.File) (results [][]any, err error) {
 	csvReader := csv.NewReader(f)
+	headers, err := csvReader.Read()
+	if err != nil {
+		log.Println("Header format is invalid: ", err)
+		return nil, err
+	}
+	log.Println("File headers: ", headers)
+	// extract the row filed types based on the first row with data
+	row_filed_types, err := readRowAndExtractType(csvReader)
+	if err != nil {
+		log.Println("Something went wrong when extracting the row field types: ", err)
+		return nil, err
+	}
 
+	// reading first 5 rows to extract their types
+	// and dynamically determine the types of the data present in the csv
+	for limit := 0; limit < 4; limit += 1 {
+		var temp []any
+		content, err := csvReader.Read()
+		if err != nil {
+			log.Println("Something went wrong reading the file: ", err)
+			return nil, err
+		}
+
+		for idx, value := range content {
+			variableType, err := computeVariableType(value)
+			if err != nil {
+				log.Fatalf("Error retrieving cell variable type: %v", err)
+				return nil, err
+			}
+			if row_filed_types[idx] != variableType {
+				log.Fatalf("Column data type mismatch: %v", err)
+				return nil, err
+			}
+
+			res := parseValue(value)
+			temp = append(temp, res)
+		}
+		results = append(results, temp)
+	}
+
+	log.Println("Column Types: ", row_filed_types)
+	// reading rows
 	for {
 		record, err := csvReader.Read()
+		var temp []any
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -145,8 +197,12 @@ func parseCsvFile(f multipart.File) (results [][]string, err error) {
 				return nil, err
 			}
 		}
-		results = append(results, record)
-		fmt.Println(record)
+
+		for _, value := range record {
+			res := parseValue(value)
+			temp = append(temp, res)
+		}
+		results = append(results, temp)
 	}
 	return results, nil
 }
@@ -208,4 +264,101 @@ func fileUploadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Write([]byte(fmt.Sprintf("%v", record)))
 	}
+}
+
+func computeVariableType(value string) (valueType string, err error) {
+	// is empty
+	if len(value) == 0 {
+		return IS_TEXT, nil
+	}
+
+	// is boolean
+	_, err = strconv.ParseBool(value)
+	if err == nil {
+		return IS_BOOLEAN, nil
+	}
+
+	// is numerical
+	_, err = strconv.ParseFloat(value, 64)
+	if err == nil {
+		return IS_NUMERICAL, nil
+	}
+	_, err = strconv.ParseInt(value, 10, 64)
+	if err == nil {
+		return IS_NUMERICAL, nil
+	}
+
+	// is date
+	_, err = time.Parse("2006-01-02 15:04:05", value)
+	if err == nil {
+		return IS_DATE, nil
+	}
+	_, err = time.Parse("2006-01-02", value)
+	if err == nil {
+		return IS_DATE, nil
+	}
+
+	return IS_TEXT, nil
+}
+
+func parseValue(value string) any {
+	// is boolean
+	booleanResult, err := strconv.ParseBool(value)
+	if err == nil {
+		return booleanResult
+	}
+
+	// is numerical
+	intResult, err := strconv.ParseFloat(value, 64)
+	if err == nil {
+		return intResult
+	}
+
+	floatResult, err := strconv.ParseInt(value, 10, 64)
+	if err == nil {
+		return floatResult
+	}
+
+	// is date
+	dateTimeResult, err := time.Parse("2006-01-02 15:04:05", value)
+	if err == nil {
+		return dateTimeResult
+	}
+
+	dateResult, err := time.Parse("2006-01-02", value)
+	if err == nil {
+		return dateResult
+	}
+
+	return value
+}
+
+func compareListElements(list []string, otherList []string) error {
+	for index, _ := range list {
+		if list[index] != otherList[index] {
+			return errors.New("CSV data row mismatch")
+		}
+	}
+	return nil
+
+}
+
+func readRowAndExtractType(csvReader *csv.Reader) ([]string, error) {
+	content, err := csvReader.Read()
+	if err != nil {
+		log.Println("Something went wrong reading the file: ", err)
+		return nil, err
+	}
+
+	var cellTypes []string
+	for _, value := range content {
+		variableType, err := computeVariableType(value)
+		if err != nil {
+			log.Fatalf("Error retrieving cell variable type: %v", err)
+			return nil, err
+		}
+		cellTypes = append(cellTypes, variableType)
+	}
+
+	return cellTypes, nil
 }
