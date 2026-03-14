@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -74,14 +73,14 @@ func uploadDataset(w http.ResponseWriter, r *http.Request) {
 
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
-		log.Fatalf("Error reading file: %v", err)
+		fmt.Println("Error reading file: ", err)
 		http.Error(w, "Error reading file", http.StatusInternalServerError)
 		return
 	}
 
 	fileToCreate, err := os.Create("temp.txt")
 	if err != nil {
-		log.Fatalf("Error creating file: %v", err)
+		fmt.Println("Error creating file: ", err)
 		http.Error(w, "Error creating file", http.StatusInternalServerError)
 		return
 	}
@@ -91,9 +90,9 @@ func uploadDataset(w http.ResponseWriter, r *http.Request) {
 	// 4. Return whether or not this has been succesfull
 	_, err = fileToCreate.Write(fileBytes)
 	if err != nil {
-		log.Fatalf("Error writing to file: %v", err)
+		fmt.Println("Error writing to file: ", err)
 		http.Error(w, "Error writing to file", http.StatusInternalServerError)
-
+		return
 	}
 
 	fmt.Fprintf(w, "Successfully Uploaded File\n")
@@ -104,12 +103,14 @@ func uploadDatasetInChunks(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fmt.Println("Error parsing file: ", err)
 		http.Error(w, "Error parsing file", http.StatusBadRequest)
+		return
 	}
 
 	file, handler, err := r.FormFile("file")
 	if err != nil {
 		fmt.Println("Error retrieving file: ", err)
 		http.Error(w, "Error retrieving file", http.StatusBadRequest)
+		return
 	}
 	defer file.Close()
 
@@ -125,7 +126,7 @@ func uploadDatasetInChunks(w http.ResponseWriter, r *http.Request) {
 	}
 	fileToCreate, err := os.Create("temp.txt")
 	if err != nil {
-		log.Fatalf("Error creating file: %v", err)
+		fmt.Println("Error creating file: ", err)
 		http.Error(w, "Error creating file", http.StatusInternalServerError)
 		return
 	}
@@ -133,7 +134,7 @@ func uploadDatasetInChunks(w http.ResponseWriter, r *http.Request) {
 
 	written, err := io.Copy(fileToCreate, file)
 	if err != nil {
-		log.Fatalf("Error writing to file: %v", err)
+		fmt.Println("Error writing to file: ", err)
 		http.Error(w, "Error writing to file", http.StatusInternalServerError)
 		return
 	}
@@ -151,11 +152,17 @@ func parseCsvFile(f multipart.File) (results [][]any, err error) {
 	}
 	log.Println("File headers: ", headers)
 	// extract the row filed types based on the first row with data
-	row_filed_types, err := readRowAndExtractType(csvReader)
+	content, row_filed_types, err := readRowAndExtractType(csvReader)
 	if err != nil {
 		log.Println("Something went wrong when extracting the row field types: ", err)
 		return nil, err
 	}
+	var temp []any
+	for _, value := range content {
+		temp = append(temp, parseValue(value))
+	}
+
+	results = append(results, temp)
 
 	// reading first 5 rows to extract their types
 	// and dynamically determine the types of the data present in the csv
@@ -170,17 +177,18 @@ func parseCsvFile(f multipart.File) (results [][]any, err error) {
 		for idx, value := range content {
 			variableType, err := computeVariableType(value)
 			if err != nil {
-				log.Fatalf("Error retrieving cell variable type: %v", err)
+				fmt.Println("Error retrieving cell variable type: ", err)
 				return nil, err
 			}
 			if row_filed_types[idx] != variableType {
-				log.Fatalf("Column data type mismatch: %v", err)
+				fmt.Println("Column data type mismatch: ", err)
 				return nil, err
 			}
 
 			res := parseValue(value)
 			temp = append(temp, res)
 		}
+
 		results = append(results, temp)
 	}
 
@@ -193,7 +201,7 @@ func parseCsvFile(f multipart.File) (results [][]any, err error) {
 			if err == io.EOF {
 				break
 			} else {
-				log.Fatalf("Error parsing the csv file: %v", err)
+				fmt.Println("Error parsing the csv file: ", err)
 				return nil, err
 			}
 		}
@@ -210,17 +218,14 @@ func parseCsvFile(f multipart.File) (results [][]any, err error) {
 func parseJsonFile(f multipart.File) (record any, err error) {
 	jsonBytes, err := io.ReadAll(f)
 	if err != nil {
-		log.Fatal("Error converting the file into byte format", err)
+		fmt.Println("Error converting the file into byte format", err)
 		return nil, err
 	}
 
-	f.Read(jsonBytes)
-	fmt.Println(string(jsonBytes))
-
-	var result map[string]any
+	var result any
 	err = json.Unmarshal(jsonBytes, &result)
 	if err != nil {
-		log.Fatal("Error parsing json file: ", err)
+		fmt.Println("Error parsing json file: ", err)
 		return nil, err
 	}
 
@@ -231,14 +236,16 @@ func parseJsonFile(f multipart.File) (record any, err error) {
 func fileUploadHandler(w http.ResponseWriter, r *http.Request) {
 	err := r.ParseMultipartForm(10 << 20)
 	if err != nil {
-		log.Fatal("Error retrieving multipart form")
+		fmt.Println("Error retrieving multipart form")
 		http.Error(w, "Error retrieving multipart form", http.StatusBadRequest)
+		return
 	}
 
 	file, handler, err := r.FormFile("file")
 	if err != nil {
-		log.Fatal("Error retrieving file: ", err)
+		fmt.Println("Error retrieving file: ", err)
 		http.Error(w, "Error retrieving file", http.StatusBadRequest)
+		return
 	}
 	fmt.Println("content type: ", handler.Header.Get("Content-Type"))
 
@@ -246,13 +253,13 @@ func fileUploadHandler(w http.ResponseWriter, r *http.Request) {
 	case "application/json":
 		record, err := parseJsonFile(file)
 		if err != nil {
-			log.Fatal("Error parsing JSON file: ", err)
+			fmt.Println("Error parsing JSON file: ", err)
 			http.Error(w, "Error parsing JSON file", http.StatusInternalServerError)
 			return
 		}
 		jsonBytes, err := json.Marshal(record)
 		if err != nil {
-			log.Fatal("Error parsing csv file: ", err)
+			fmt.Println("Error parsing csv file: ", err)
 			http.Error(w, "Error encoding JSON response", http.StatusInternalServerError)
 			return
 		}
@@ -261,6 +268,7 @@ func fileUploadHandler(w http.ResponseWriter, r *http.Request) {
 		record, err := parseCsvFile(file)
 		if err != nil {
 			http.Error(w, "Error parsing csv file", http.StatusInternalServerError)
+			return
 		}
 		w.Write([]byte(fmt.Sprintf("%v", record)))
 	}
@@ -272,20 +280,18 @@ func computeVariableType(value string) (valueType string, err error) {
 		return IS_TEXT, nil
 	}
 
-	// is boolean
-	_, err = strconv.ParseBool(value)
-	if err == nil {
-		return IS_BOOLEAN, nil
-	}
-
 	// is numerical
 	_, err = strconv.ParseFloat(value, 64)
 	if err == nil {
 		return IS_NUMERICAL, nil
 	}
-	_, err = strconv.ParseInt(value, 10, 64)
+
+	// is boolean
+	// after the numerical check because
+	// "1" and "0" are valid booleans in Go's strconv.ParseBool
+	_, err = strconv.ParseBool(value)
 	if err == nil {
-		return IS_NUMERICAL, nil
+		return IS_BOOLEAN, nil
 	}
 
 	// is date
@@ -302,21 +308,17 @@ func computeVariableType(value string) (valueType string, err error) {
 }
 
 func parseValue(value string) any {
+	floatResult, err := strconv.ParseFloat(value, 64)
+	if err == nil {
+		return floatResult
+	}
+
 	// is boolean
+	// after the numerical check because
+	// "1" and "0" are valid booleans in Go's strconv.ParseBool
 	booleanResult, err := strconv.ParseBool(value)
 	if err == nil {
 		return booleanResult
-	}
-
-	// is numerical
-	intResult, err := strconv.ParseFloat(value, 64)
-	if err == nil {
-		return intResult
-	}
-
-	floatResult, err := strconv.ParseInt(value, 10, 64)
-	if err == nil {
-		return floatResult
 	}
 
 	// is date
@@ -333,32 +335,22 @@ func parseValue(value string) any {
 	return value
 }
 
-func compareListElements(list []string, otherList []string) error {
-	for index, _ := range list {
-		if list[index] != otherList[index] {
-			return errors.New("CSV data row mismatch")
-		}
-	}
-	return nil
-
-}
-
-func readRowAndExtractType(csvReader *csv.Reader) ([]string, error) {
+func readRowAndExtractType(csvReader *csv.Reader) ([]string, []string, error) {
 	content, err := csvReader.Read()
 	if err != nil {
 		log.Println("Something went wrong reading the file: ", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	var cellTypes []string
 	for _, value := range content {
 		variableType, err := computeVariableType(value)
 		if err != nil {
-			log.Fatalf("Error retrieving cell variable type: %v", err)
-			return nil, err
+			fmt.Println("Error retrieving cell variable type: ", err)
+			return nil, nil, err
 		}
 		cellTypes = append(cellTypes, variableType)
 	}
 
-	return cellTypes, nil
+	return content, cellTypes, nil
 }
