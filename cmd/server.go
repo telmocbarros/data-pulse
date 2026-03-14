@@ -132,14 +132,23 @@ func uploadDatasetInChunks(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Successfully Uploaded File\n")
 }
 
-func parseCsvFile(f multipart.File) (record [][]string, err error) {
+func parseCsvFile(f multipart.File) (results [][]string, err error) {
 	csvReader := csv.NewReader(f)
-	record, err = csvReader.ReadAll()
-	if err != nil {
-		log.Fatalf("Error parsing the csv file: %v", err)
-		return nil, err
+
+	for {
+		record, err := csvReader.Read()
+		if err != nil {
+			if err == io.EOF {
+				break
+			} else {
+				log.Fatalf("Error parsing the csv file: %v", err)
+				return nil, err
+			}
+		}
+		results = append(results, record)
+		fmt.Println(record)
 	}
-	return record, nil
+	return results, nil
 }
 
 func parseJsonFile(f multipart.File) (record any, err error) {
