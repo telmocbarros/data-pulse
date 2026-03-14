@@ -1,16 +1,19 @@
 package main
 
 import (
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 )
 
 func main() {
 	http.HandleFunc("/health", health)
-	http.HandleFunc("/dataset", uploadDatasetInChunks)
+	http.HandleFunc("/dataset", fileUploadHandler)
 	fmt.Println("Listening on PORT 8080 ...")
 	http.ListenAndServe(":8080", nil)
 }
@@ -127,4 +130,73 @@ func uploadDatasetInChunks(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("Succesfully uploaded file: %v B\n", written)
 	fmt.Fprintf(w, "Successfully Uploaded File\n")
+}
+
+func parseCsvFile(f multipart.File) (record [][]string, err error) {
+	csvReader := csv.NewReader(f)
+	record, err = csvReader.ReadAll()
+	if err != nil {
+		log.Fatalf("Error parsing the csv file: %v", err)
+		return nil, err
+	}
+	return record, nil
+}
+
+func parseJsonFile(f multipart.File) (record any, err error) {
+	jsonBytes, err := io.ReadAll(f)
+	if err != nil {
+		log.Fatal("Error converting the file into byte format", err)
+		return nil, err
+	}
+
+	f.Read(jsonBytes)
+	fmt.Println(string(jsonBytes))
+
+	var result map[string]any
+	err = json.Unmarshal(jsonBytes, &result)
+	if err != nil {
+		log.Fatal("Error parsing json file: ", err)
+		return nil, err
+	}
+
+	fmt.Println(result)
+	return result, nil
+}
+
+func fileUploadHandler(w http.ResponseWriter, r *http.Request) {
+	err := r.ParseMultipartForm(10 << 20)
+	if err != nil {
+		log.Fatal("Error retrieving multipart form")
+		http.Error(w, "Error retrieving multipart form", http.StatusBadRequest)
+	}
+
+	file, handler, err := r.FormFile("file")
+	if err != nil {
+		log.Fatal("Error retrieving file: ", err)
+		http.Error(w, "Error retrieving file", http.StatusBadRequest)
+	}
+	fmt.Println("content type: ", handler.Header.Get("Content-Type"))
+
+	switch handler.Header.Get("Content-Type") {
+	case "application/json":
+		record, err := parseJsonFile(file)
+		if err != nil {
+			log.Fatal("Error parsing JSON file: ", err)
+			http.Error(w, "Error parsing JSON file", http.StatusInternalServerError)
+			return
+		}
+		jsonBytes, err := json.Marshal(record)
+		if err != nil {
+			log.Fatal("Error parsing csv file: ", err)
+			http.Error(w, "Error encoding JSON response", http.StatusInternalServerError)
+			return
+		}
+		w.Write(jsonBytes)
+	case "text/csv":
+		record, err := parseCsvFile(file)
+		if err != nil {
+			http.Error(w, "Error parsing csv file", http.StatusInternalServerError)
+		}
+		w.Write([]byte(fmt.Sprintf("%v", record)))
+	}
 }
