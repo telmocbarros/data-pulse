@@ -7,6 +7,9 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
+
+	"github.com/google/uuid"
+	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 )
 
 func ProcessCsvFile(f multipart.File) (results [][]any, validationErrors []ValidationError, err error) {
@@ -18,25 +21,32 @@ func ProcessCsvFile(f multipart.File) (results [][]any, validationErrors []Valid
 	}
 	log.Println("File headers: ", headers)
 	// extract the row filed types based on the first row with data
-	content, row_filed_types, err := ReadCsvRowAndExtractType(csvReader)
+	content, row_field_types, err := ReadCsvRowAndExtractType(csvReader)
 	if err != nil {
 		log.Println("Something went wrong when extracting the row field types: ", err)
 		return nil, nil, err
 	}
 	var temp []any
-	for _, value := range content {
+
+	jsonObj := make(map[string]any)
+
+	var jsonFormattedData []map[string]any
+
+	for idx, value := range content {
 		temp = append(temp, ParseValue(value))
+		jsonObj[headers[idx]] = value
 	}
 	results = append(results, temp)
+	jsonFormattedData = append(jsonFormattedData, jsonObj)
 
-	log.Println("Column Types: ", row_filed_types)
+	log.Println("Column Types: ", row_field_types)
 	// allow csv.Reader to handle rows with wrong field count
 	// instead of returning an error
 	csvReader.FieldsPerRecord = -1
 
 	// reading remaining rows, validating types and flagging mismatches
 	rowNumber := int32(2) // row 1 was used for type extraction
-	expectedColumns := len(row_filed_types)
+	expectedColumns := len(row_field_types)
 	for {
 		record, err := csvReader.Read()
 		if err != nil {
@@ -66,7 +76,9 @@ func ProcessCsvFile(f multipart.File) (results [][]any, validationErrors []Valid
 		}
 
 		var temp []any
+		jsonResult := make(map[string]any)
 		for idx, value := range record {
+
 			// flag missing values
 			if value == "" {
 				validationErrors = append(validationErrors, ValidationError{
@@ -85,21 +97,27 @@ func ProcessCsvFile(f multipart.File) (results [][]any, validationErrors []Valid
 					fmt.Println("Error retrieving cell variable type: ", err)
 					return nil, nil, err
 				}
-				if row_filed_types[idx] != variableType {
+				if row_field_types[idx] != variableType {
 					validationErrors = append(validationErrors, ValidationError{
 						Row:      rowNumber,
 						Column:   int32(idx),
 						Kind:     "type_mismatch",
-						Expected: row_filed_types[idx],
+						Expected: row_field_types[idx],
 						Received: variableType,
 					})
 				}
 			}
 			temp = append(temp, ParseValue(value))
+			jsonResult[headers[idx]] = ParseValue(value)
 		}
+		jsonFormattedData = append(jsonFormattedData, jsonResult)
 		results = append(results, temp)
 		rowNumber++
 	}
+
+	fmt.Println("FORMATTED JSON:", jsonFormattedData)
+	uploadJsonDataset(jsonFormattedData)
+
 	return results, validationErrors, nil
 }
 
@@ -191,36 +209,36 @@ func ProcessJsonFile(f multipart.File) (jsonResults []map[string]any, validation
 		return nil, nil, fmt.Errorf("expected closing ']': %w", err)
 	}
 
+	uploadJsonDataset(jsonResults)
+
 	return jsonResults, validationErrors, nil
 }
 
-func UploadDataset(datasetType string, dataset any) {
-	switch datasetType {
-	case "csv":
-		if data, ok := dataset.([][]string); ok {
-			fmt.Println("Processing csv dataset ...")
-			uploadCsvDataset(data)
-		} else {
-			fmt.Println("Mismatch between dataset type and dataset format")
+// func uploadCsvDataset(dataset [][]string) {
+// 	fmt.Println("Processing csv dataset ...")
+// 	// 1.
+
+// }
+
+func uploadJsonDataset(dataset []map[string]any) {
+	fmt.Println("Processing json dataset ...")
+
+	limit := 50
+	start := 0
+	end := limit
+	numBatches := len(dataset) / limit
+	datasetId := uuid.New().String()
+
+	for range numBatches {
+		if end > len(dataset) {
+			end = len(dataset)
 		}
-	case "json":
-		if data, ok := dataset.(map[string]any); ok {
-			fmt.Println("Processing json dataset ...")
-			fmt.Println("Processing csv dataset ...")
-			uploadJsonDataset(data)
-		} else {
-			fmt.Println("Mismatch between dataset type and dataset format")
+		if err := repository.CreateDatasetTable("", datasetId, dataset[start:end]); err != nil {
+			fmt.Println("Could not persist the dataset")
+			break
 		}
-	default:
-		fmt.Println("Invalid dataset type: ", datasetType)
+
+		start += (limit + 1)
+		end += (limit + 1)
 	}
-}
-
-func uploadCsvDataset(dataset [][]string) {
-	// columnNames := dataset[0][0]
-	// create table
-}
-
-func uploadJsonDataset(dataset map[string]any) {
-
 }
