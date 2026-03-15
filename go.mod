@@ -1,4 +1,4 @@
-module example/data-pulse
+module github.com/telmocbarros/data-pulse
 
 go 1.25.5
 

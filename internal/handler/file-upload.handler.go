@@ -1,48 +1,57 @@
-package main
+package handler
 
 import (
 	"encoding/csv"
 	"encoding/json"
-	"example/data-pulse/config"
 	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
-	"strconv"
-	"time"
 )
 
-type ValidationError struct {
-	Row      int32
-	Column   int32
-	Kind     string // "type_mismatch", "missing_value", "malformed_row"
-	Expected string
-	Received string
-	Detail   string
-}
-
-const (
-	IS_NUMERICAL = "IS_NUMERICAL"
-	IS_BOOLEAN   = "IS_BOOLEAN"
-	IS_DATE      = "IS_DATE"
-	IS_TEXT      = "IS_TEXT"
-)
-
-func main() {
-	if err := config.SetupDatabase(); err != nil {
-		log.Fatal("Error setting up the database. Shutting down the server!")
+func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
+	err := r.ParseMultipartForm(10 << 20)
+	if err != nil {
+		fmt.Println("Error retrieving multipart form")
+		http.Error(w, "Error retrieving multipart form", http.StatusBadRequest)
+		return
 	}
-	defer config.Storage.Close()
 
-	http.HandleFunc("/health", health)
-	http.HandleFunc("/dataset", fileUploadHandler)
-	fmt.Println("Listening on PORT 8080 ...")
-	http.ListenAndServe(":8080", nil)
-}
+	file, handler, err := r.FormFile("file")
+	if err != nil {
+		fmt.Println("Error retrieving file: ", err)
+		http.Error(w, "Error retrieving file", http.StatusBadRequest)
+		return
+	}
+	fmt.Println("content type: ", handler.Header.Get("Content-Type"))
 
-func health(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("healthy"))
+	switch handler.Header.Get("Content-Type") {
+	case "application/json":
+		record, validationErrors, err := parseJsonFile(file)
+		if err != nil {
+			fmt.Println("Error parsing JSON file: ", err)
+			http.Error(w, "Error parsing JSON file", http.StatusInternalServerError)
+			return
+		}
+		if len(validationErrors) > 0 {
+			log.Printf("JSON parsed with %d validation errors\n", len(validationErrors))
+		}
+		fmt.Fprintf(w, "Successfully parsed JSON file: %d rows, %d validation errors\n", len(record), len(validationErrors))
+
+	case "text/csv":
+		record, validationErrors, err := parseCsvFile(file)
+		if err != nil {
+			http.Error(w, "Error parsing csv file", http.StatusInternalServerError)
+			return
+		}
+		if len(validationErrors) > 0 {
+			log.Printf("CSV parsed with %d validation errors\n", len(validationErrors))
+		}
+		fmt.Fprintf(w, "Successfully parsed CSV file: %d rows, %d validation errors\n", len(record), len(validationErrors))
+	default:
+		http.Error(w, "Unsupported file type", http.StatusBadRequest)
+	}
 }
 
 func parseCsvFile(f multipart.File) (results [][]any, validationErrors []ValidationError, err error) {
@@ -116,7 +125,7 @@ func parseCsvFile(f multipart.File) (results [][]any, validationErrors []Validat
 
 			// flag type mismatches (only for columns within expected range)
 			if idx < expectedColumns {
-				variableType, err := computeVariableType(value)
+				variableType, err := ComputeVariableType(value)
 				if err != nil {
 					fmt.Println("Error retrieving cell variable type: ", err)
 					return nil, nil, err
@@ -180,7 +189,7 @@ func parseJsonFile(f multipart.File) (jsonResults []map[string]any, validationEr
 			}
 			columnTypes = make(map[string]string, len(row))
 			for k, v := range row {
-				varType, err := computeJsonVariableType(v)
+				varType, err := ComputeVariableType(fmt.Sprintf("%v", v))
 				if err != nil {
 					return nil, nil, fmt.Errorf("error detecting type for column %q: %w", k, err)
 				}
@@ -201,7 +210,7 @@ func parseJsonFile(f multipart.File) (jsonResults []map[string]any, validationEr
 					})
 					continue
 				}
-				varType, err := computeJsonVariableType(v)
+				varType, err := ComputeVariableType(fmt.Sprintf("%v", v))
 				if err != nil {
 					return nil, nil, fmt.Errorf("error detecting type for column %q: %w", k, err)
 				}
@@ -228,146 +237,4 @@ func parseJsonFile(f multipart.File) (jsonResults []map[string]any, validationEr
 	}
 
 	return jsonResults, validationErrors, nil
-}
-
-func fileUploadHandler(w http.ResponseWriter, r *http.Request) {
-	err := r.ParseMultipartForm(10 << 20)
-	if err != nil {
-		fmt.Println("Error retrieving multipart form")
-		http.Error(w, "Error retrieving multipart form", http.StatusBadRequest)
-		return
-	}
-
-	file, handler, err := r.FormFile("file")
-	if err != nil {
-		fmt.Println("Error retrieving file: ", err)
-		http.Error(w, "Error retrieving file", http.StatusBadRequest)
-		return
-	}
-	fmt.Println("content type: ", handler.Header.Get("Content-Type"))
-
-	switch handler.Header.Get("Content-Type") {
-	case "application/json":
-		record, validationErrors, err := parseJsonFile(file)
-		if err != nil {
-			fmt.Println("Error parsing JSON file: ", err)
-			http.Error(w, "Error parsing JSON file", http.StatusInternalServerError)
-			return
-		}
-		if len(validationErrors) > 0 {
-			log.Printf("JSON parsed with %d validation errors\n", len(validationErrors))
-		}
-		fmt.Fprintf(w, "Successfully parsed JSON file: %d rows, %d validation errors\n", len(record), len(validationErrors))
-
-	case "text/csv":
-		record, validationErrors, err := parseCsvFile(file)
-		if err != nil {
-			http.Error(w, "Error parsing csv file", http.StatusInternalServerError)
-			return
-		}
-		if len(validationErrors) > 0 {
-			log.Printf("CSV parsed with %d validation errors\n", len(validationErrors))
-		}
-		fmt.Fprintf(w, "Successfully parsed CSV file: %d rows, %d validation errors\n", len(record), len(validationErrors))
-	default:
-		http.Error(w, "Unsupported file type", http.StatusBadRequest)
-	}
-}
-
-func computeVariableType(value string) (valueType string, err error) {
-	// is empty
-	if len(value) == 0 {
-		return IS_TEXT, nil
-	}
-
-	// is numerical
-	_, err = strconv.ParseFloat(value, 64)
-	if err == nil {
-		return IS_NUMERICAL, nil
-	}
-
-	// is boolean
-	// after the numerical check because
-	// "1" and "0" are valid booleans in Go's strconv.ParseBool
-	_, err = strconv.ParseBool(value)
-	if err == nil {
-		return IS_BOOLEAN, nil
-	}
-
-	// is date
-	_, err = time.Parse("2006-01-02 15:04:05", value)
-	if err == nil {
-		return IS_DATE, nil
-	}
-	_, err = time.Parse("2006-01-02", value)
-	if err == nil {
-		return IS_DATE, nil
-	}
-
-	return IS_TEXT, nil
-}
-
-func computeJsonVariableType(value any) (string, error) {
-	return computeVariableType(fmt.Sprintf("%v", value))
-}
-
-func readCsvRowAndExtractType(csvReader *csv.Reader) ([]string, []string, error) {
-	content, err := csvReader.Read()
-	if err != nil {
-		log.Println("Something went wrong reading the file: ", err)
-		return nil, nil, err
-	}
-
-	var cellTypes []string
-	for _, value := range content {
-		variableType, err := computeVariableType(value)
-		if err != nil {
-			fmt.Println("Error retrieving cell variable type: ", err)
-			return nil, nil, err
-		}
-		cellTypes = append(cellTypes, variableType)
-	}
-
-	return content, cellTypes, nil
-}
-
-func readJsonRowAndExtractType(row map[string]any) {
-	for k, v := range row {
-		if strValue, ok := v.(string); ok {
-			row[k] = parseValue(strValue)
-		}
-	}
-}
-
-func parseValue(value string) any {
-	intResult, err := strconv.ParseInt(value, 10, 64)
-	if err == nil {
-		return intResult
-	}
-
-	floatResult, err := strconv.ParseFloat(value, 64)
-	if err == nil {
-		return floatResult
-	}
-
-	// is boolean
-	// after the numerical check because
-	// "1" and "0" are valid booleans in Go's strconv.ParseBool
-	booleanResult, err := strconv.ParseBool(value)
-	if err == nil {
-		return booleanResult
-	}
-
-	// is date
-	dateTimeResult, err := time.Parse("2006-01-02 15:04:05", value)
-	if err == nil {
-		return dateTimeResult
-	}
-
-	dateResult, err := time.Parse("2006-01-02", value)
-	if err == nil {
-		return dateResult
-	}
-
-	return value
 }
