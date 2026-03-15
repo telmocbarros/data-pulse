@@ -13,6 +13,15 @@ import (
 	"time"
 )
 
+type ValidationError struct {
+	Row      int32
+	Column   int32
+	Kind     string // "type_mismatch", "missing_value", "malformed_row"
+	Expected string
+	Received string
+	Detail   string
+}
+
 const (
 	IS_NUMERICAL = "IS_NUMERICAL"
 	IS_BOOLEAN   = "IS_BOOLEAN"
@@ -143,93 +152,109 @@ func uploadDatasetInChunks(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Successfully Uploaded File\n")
 }
 
-func parseCsvFile(f multipart.File) (results [][]any, err error) {
+func parseCsvFile(f multipart.File) (results [][]any, validationErrors []ValidationError, err error) {
 	csvReader := csv.NewReader(f)
 	headers, err := csvReader.Read()
 	if err != nil {
 		log.Println("Header format is invalid: ", err)
-		return nil, err
+		return nil, nil, err
 	}
 	log.Println("File headers: ", headers)
 	// extract the row filed types based on the first row with data
 	content, row_filed_types, err := readRowAndExtractType(csvReader)
 	if err != nil {
 		log.Println("Something went wrong when extracting the row field types: ", err)
-		return nil, err
+		return nil, nil, err
 	}
 	var temp []any
 	for _, value := range content {
 		temp = append(temp, parseValue(value))
 	}
-
 	results = append(results, temp)
 
-	// reading first 5 rows to extract their types
-	// and dynamically determine the types of the data present in the csv
-	for limit := 0; limit < 4; limit += 1 {
-		var temp []any
-		content, err := csvReader.Read()
-		if err != nil {
-			log.Println("Something went wrong reading the file: ", err)
-			return nil, err
-		}
-
-		for idx, value := range content {
-			variableType, err := computeVariableType(value)
-			if err != nil {
-				fmt.Println("Error retrieving cell variable type: ", err)
-				return nil, err
-			}
-			if row_filed_types[idx] != variableType {
-				fmt.Println("Column data type mismatch: ", err)
-				return nil, err
-			}
-
-			res := parseValue(value)
-			temp = append(temp, res)
-		}
-
-		results = append(results, temp)
-	}
-
 	log.Println("Column Types: ", row_filed_types)
-	// reading rows
+	// allow csv.Reader to handle rows with wrong field count
+	// instead of returning an error
+	csvReader.FieldsPerRecord = -1
+
+	// reading remaining rows, validating types and flagging mismatches
+	rowNumber := int32(2) // row 1 was used for type extraction
+	expectedColumns := len(row_filed_types)
 	for {
 		record, err := csvReader.Read()
-		var temp []any
 		if err != nil {
 			if err == io.EOF {
 				break
-			} else {
-				fmt.Println("Error parsing the csv file: ", err)
-				return nil, err
 			}
+			// flag malformed rows (bad quoting, etc.) and continue
+			validationErrors = append(validationErrors, ValidationError{
+				Row:    rowNumber,
+				Column: -1,
+				Kind:   "malformed_row",
+				Detail: err.Error(),
+			})
+			rowNumber++
+			continue
 		}
 
-		for _, value := range record {
-			res := parseValue(value)
-			temp = append(temp, res)
+		// flag rows with wrong number of fields
+		if len(record) != expectedColumns {
+			validationErrors = append(validationErrors, ValidationError{
+				Row:      rowNumber,
+				Column:   -1,
+				Kind:     "malformed_row",
+				Expected: fmt.Sprintf("%d columns", expectedColumns),
+				Received: fmt.Sprintf("%d columns", len(record)),
+			})
+		}
+
+		var temp []any
+		for idx, value := range record {
+			// flag missing values
+			if value == "" {
+				validationErrors = append(validationErrors, ValidationError{
+					Row:    rowNumber,
+					Column: int32(idx),
+					Kind:   "missing_value",
+				})
+				temp = append(temp, parseValue(value))
+				continue
+			}
+
+			// flag type mismatches (only for columns within expected range)
+			if idx < expectedColumns {
+				variableType, err := computeVariableType(value)
+				if err != nil {
+					fmt.Println("Error retrieving cell variable type: ", err)
+					return nil, nil, err
+				}
+				if row_filed_types[idx] != variableType {
+					validationErrors = append(validationErrors, ValidationError{
+						Row:      rowNumber,
+						Column:   int32(idx),
+						Kind:     "type_mismatch",
+						Expected: row_filed_types[idx],
+						Received: variableType,
+					})
+				}
+			}
+			temp = append(temp, parseValue(value))
 		}
 		results = append(results, temp)
+		rowNumber++
 	}
-	return results, nil
+	return results, validationErrors, nil
 }
 
 func parseJsonFile(f multipart.File) (record any, err error) {
-	jsonBytes, err := io.ReadAll(f)
-	if err != nil {
-		fmt.Println("Error converting the file into byte format", err)
-		return nil, err
-	}
-
 	var result any
-	err = json.Unmarshal(jsonBytes, &result)
+	err = json.NewDecoder(f).Decode(&result)
+
 	if err != nil {
 		fmt.Println("Error parsing json file: ", err)
 		return nil, err
 	}
 
-	fmt.Println(result)
 	return result, nil
 }
 
@@ -257,20 +282,27 @@ func fileUploadHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error parsing JSON file", http.StatusInternalServerError)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
 		jsonBytes, err := json.Marshal(record)
 		if err != nil {
-			fmt.Println("Error parsing csv file: ", err)
+			fmt.Println("Error encoding JSON response: ", err)
 			http.Error(w, "Error encoding JSON response", http.StatusInternalServerError)
 			return
 		}
-		w.Write(jsonBytes)
+		fmt.Fprintf(w, "Successfully parsed JSON file: %d rows\n", len(jsonBytes))
+
 	case "text/csv":
-		record, err := parseCsvFile(file)
+		record, validationErrors, err := parseCsvFile(file)
 		if err != nil {
 			http.Error(w, "Error parsing csv file", http.StatusInternalServerError)
 			return
 		}
-		w.Write([]byte(fmt.Sprintf("%v", record)))
+		if len(validationErrors) > 0 {
+			log.Printf("CSV parsed with %d validation errors\n", len(validationErrors))
+		}
+		fmt.Fprintf(w, "Successfully parsed CSV file: %d rows, %d validation errors\n", len(record), len(validationErrors))
+	default:
+		http.Error(w, "Unsupported file type", http.StatusBadRequest)
 	}
 }
 
@@ -308,6 +340,11 @@ func computeVariableType(value string) (valueType string, err error) {
 }
 
 func parseValue(value string) any {
+	intResult, err := strconv.ParseInt(value, 10, 64)
+	if err == nil {
+		return intResult
+	}
+
 	floatResult, err := strconv.ParseFloat(value, 64)
 	if err == nil {
 		return floatResult
