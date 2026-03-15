@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
+	"example/data-pulse/config"
 	"fmt"
 	"io"
 	"log"
@@ -29,6 +30,11 @@ const (
 )
 
 func main() {
+	if err := config.SetupDatabase(); err != nil {
+		log.Fatal("Error setting up the database. Shutting down the server!")
+	}
+	defer config.Storage.Close()
+
 	http.HandleFunc("/health", health)
 	http.HandleFunc("/dataset", fileUploadHandler)
 	fmt.Println("Listening on PORT 8080 ...")
