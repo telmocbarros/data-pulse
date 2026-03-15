@@ -34,3 +34,11 @@ At any point, only ~32 KB is in memory. The rest of the 2 GB is either still in 
 When you use `io.ReadAll(file)` instead, it keeps calling `Read` and accumulating all chunks into a growing byte slice in memory — that's what forces the full 2 GB into RAM.
 
 The data arrives the same way in both cases (as a stream). The difference is whether you keep each chunk in memory or discard it after writing.
+
+## Persistence Layer
+
+User a PostgreSQL database where you create a new table every time a user uploads a new dataset.
+There will be a couple of additional tables to have some visibility of the database, namely:
+
+- DATASETS table (id, name, uploaded_at, row_count, storage_table_name, user_id, etc)
+- DATASET COLUMNS table (dataset_id, column_name, column_type, column_index)
