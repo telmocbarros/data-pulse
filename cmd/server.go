@@ -161,7 +161,7 @@ func parseCsvFile(f multipart.File) (results [][]any, validationErrors []Validat
 	}
 	log.Println("File headers: ", headers)
 	// extract the row filed types based on the first row with data
-	content, row_filed_types, err := readRowAndExtractType(csvReader)
+	content, row_filed_types, err := readCsvRowAndExtractType(csvReader)
 	if err != nil {
 		log.Println("Something went wrong when extracting the row field types: ", err)
 		return nil, nil, err
@@ -246,16 +246,95 @@ func parseCsvFile(f multipart.File) (results [][]any, validationErrors []Validat
 	return results, validationErrors, nil
 }
 
-func parseJsonFile(f multipart.File) (record any, err error) {
-	var result any
-	err = json.NewDecoder(f).Decode(&result)
+func parseJsonFile(f multipart.File) (jsonResults []map[string]any, validationErrors []ValidationError, err error) {
+	decoder := json.NewDecoder(f)
 
+	// Consume opening '[' of the array
+	tok, err := decoder.Token()
 	if err != nil {
-		fmt.Println("Error parsing json file: ", err)
-		return nil, err
+		return nil, nil, fmt.Errorf("expected opening '[': %w", err)
 	}
 
-	return result, nil
+	if delim, ok := tok.(json.Delim); !ok || delim != '[' {
+		return nil, nil, fmt.Errorf("expected JSON array, got %v", tok)
+	}
+
+	var columnKeys []string
+	var columnTypes map[string]string
+
+	// Decode one object at a time while the array has more elements
+	rowNumber := int32(0)
+	for decoder.More() {
+		var row map[string]any
+		if err := decoder.Decode(&row); err != nil {
+			validationErrors = append(validationErrors, ValidationError{
+				Row:    rowNumber,
+				Column: -1,
+				Kind:   "malformed_row",
+				Detail: err.Error(),
+			})
+			rowNumber++
+			continue
+		}
+
+		readJsonRowAndExtractType(row)
+
+		if rowNumber == 0 {
+			// Extract column types from the first row
+			columnKeys = make([]string, 0, len(row))
+			for k := range row {
+				columnKeys = append(columnKeys, k)
+			}
+			columnTypes = make(map[string]string, len(row))
+			for k, v := range row {
+				varType, err := computeJsonVariableType(v)
+				if err != nil {
+					return nil, nil, fmt.Errorf("error detecting type for column %q: %w", k, err)
+				}
+				columnTypes[k] = varType
+			}
+			log.Println("Column keys: ", columnKeys)
+			log.Println("Column types: ", columnTypes)
+		} else {
+			// Validate subsequent rows against first-row types
+			for _, k := range columnKeys {
+				v, exists := row[k]
+				if !exists {
+					validationErrors = append(validationErrors, ValidationError{
+						Row:    rowNumber,
+						Column: -1,
+						Kind:   "missing_value",
+						Detail: fmt.Sprintf("missing column %q", k),
+					})
+					continue
+				}
+				varType, err := computeJsonVariableType(v)
+				if err != nil {
+					return nil, nil, fmt.Errorf("error detecting type for column %q: %w", k, err)
+				}
+				if varType != columnTypes[k] {
+					validationErrors = append(validationErrors, ValidationError{
+						Row:      rowNumber,
+						Column:   -1,
+						Kind:     "type_mismatch",
+						Expected: columnTypes[k],
+						Received: varType,
+						Detail:   fmt.Sprintf("column %q", k),
+					})
+				}
+			}
+		}
+
+		jsonResults = append(jsonResults, row)
+		rowNumber++
+	}
+
+	// Consume closing ']'
+	if _, err := decoder.Token(); err != nil {
+		return nil, nil, fmt.Errorf("expected closing ']': %w", err)
+	}
+
+	return jsonResults, validationErrors, nil
 }
 
 func fileUploadHandler(w http.ResponseWriter, r *http.Request) {
@@ -276,20 +355,16 @@ func fileUploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch handler.Header.Get("Content-Type") {
 	case "application/json":
-		record, err := parseJsonFile(file)
+		record, validationErrors, err := parseJsonFile(file)
 		if err != nil {
 			fmt.Println("Error parsing JSON file: ", err)
 			http.Error(w, "Error parsing JSON file", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		jsonBytes, err := json.Marshal(record)
-		if err != nil {
-			fmt.Println("Error encoding JSON response: ", err)
-			http.Error(w, "Error encoding JSON response", http.StatusInternalServerError)
-			return
+		if len(validationErrors) > 0 {
+			log.Printf("JSON parsed with %d validation errors\n", len(validationErrors))
 		}
-		fmt.Fprintf(w, "Successfully parsed JSON file: %d rows\n", len(jsonBytes))
+		fmt.Fprintf(w, "Successfully parsed JSON file: %d rows, %d validation errors\n", len(record), len(validationErrors))
 
 	case "text/csv":
 		record, validationErrors, err := parseCsvFile(file)
@@ -372,7 +447,7 @@ func parseValue(value string) any {
 	return value
 }
 
-func readRowAndExtractType(csvReader *csv.Reader) ([]string, []string, error) {
+func readCsvRowAndExtractType(csvReader *csv.Reader) ([]string, []string, error) {
 	content, err := csvReader.Read()
 	if err != nil {
 		log.Println("Something went wrong reading the file: ", err)
@@ -390,4 +465,16 @@ func readRowAndExtractType(csvReader *csv.Reader) ([]string, []string, error) {
 	}
 
 	return content, cellTypes, nil
+}
+
+func readJsonRowAndExtractType(row map[string]any) {
+	for k, v := range row {
+		if strValue, ok := v.(string); ok {
+			row[k] = parseValue(strValue)
+		}
+	}
+}
+
+func computeJsonVariableType(value any) (string, error) {
+	return computeVariableType(fmt.Sprintf("%v", value))
 }
