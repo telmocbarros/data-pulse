@@ -220,19 +220,35 @@ func uploadJsonDataset(dataset []map[string]any) {
 	limit := 50
 	start := 0
 	end := limit
-	numBatches := len(dataset) / limit
 	datasetId := uuid.New().String()
 
-	for range numBatches {
+	columns := extractColumns(dataset[0])
+
+	tableName, err := repository.CreateDatasetTable("", columns)
+	if err != nil {
+		fmt.Println("Error while attempting to create a table: ", err)
+		return
+	}
+
+	for start < len(dataset) {
 		if end > len(dataset) {
 			end = len(dataset)
 		}
-		if err := repository.CreateDatasetTable("", datasetId, dataset[start:end]); err != nil {
+		if err := repository.StoreDataset(tableName, datasetId, dataset[start:end]); err != nil {
 			fmt.Println("Could not persist the dataset")
 			break
 		}
 
-		start += (limit + 1)
-		end += (limit + 1)
+		start += limit
+		end += limit
 	}
+}
+
+func extractColumns(row map[string]any) [][]string {
+	columns := make([][]string, 0, len(row))
+	for key, val := range row {
+		varType, _ := ComputeVariableType(fmt.Sprintf("%v", val))
+		columns = append(columns, []string{key, varType})
+	}
+	return columns
 }

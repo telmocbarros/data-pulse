@@ -114,6 +114,15 @@ func ComputeVariableType(value string) (valueType string, err error) {
 	if err == nil {
 		return IS_DATE, nil
 	}
+	// time.Time printed via fmt.Sprintf("%v") produces this format
+	_, err = time.Parse("2006-01-02 15:04:05 -0700 MST", value)
+	if err == nil {
+		return IS_DATE, nil
+	}
+	_, err = time.Parse("2006-01-02 15:04:05 +0000 UTC", value)
+	if err == nil {
+		return IS_DATE, nil
+	}
 
 	return IS_TEXT, nil
 }

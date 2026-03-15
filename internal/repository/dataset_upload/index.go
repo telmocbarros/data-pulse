@@ -8,7 +8,7 @@ import (
 	"github.com/telmocbarros/data-pulse/config"
 )
 
-func CreateDatasetTable(tableName string, datasetId string, rows []map[string]any) error {
+func StoreDataset(tableName string, datasetId string, rows []map[string]any) error {
 	if tableName == "" {
 		tableName = "json_datasets"
 	}
@@ -60,4 +60,47 @@ func CreateDatasetTable(tableName string, datasetId string, rows []map[string]an
 
 	fmt.Println("Successfully executed the query: ", result)
 	return nil
+}
+
+func CreateDatasetTable(tableName string, columns [][]string) (string, error) {
+	if tableName == "" {
+		tableName = fmt.Sprintf("json_datasets_%s", strings.ReplaceAll(uuid.New().String(), "-", ""))
+	}
+	var query strings.Builder
+	fmt.Fprintf(&query, "CREATE TABLE IF NOT EXISTS %s (id UUID PRIMARY KEY, dataset_id UUID, ", tableName)
+	for j, col := range columns {
+		if j > 0 {
+			query.WriteString(", ")
+		}
+		if col[0] == "created_at" {
+			fmt.Fprintf(&query, "%s %s", "entry_date", mapToDatabase(col[1]))
+
+		} else {
+
+			fmt.Fprintf(&query, "%s %s", col[0], mapToDatabase(col[1]))
+		}
+	}
+	query.WriteString(")")
+
+	_, err := config.Storage.Exec(query.String())
+	if err != nil {
+		return "", fmt.Errorf("unable to create table: %w", err)
+	}
+
+	return tableName, nil
+}
+
+func mapToDatabase(value string) string {
+	switch value {
+	case "IS_NUMERICAL":
+		return "DOUBLE PRECISION"
+	case "IS_BOOLEAN":
+		return "BOOLEAN"
+	case "IS_DATE":
+		return "TIMESTAMP"
+	case "IS_TEXT":
+		return "TEXT"
+	default:
+		return "TEXT"
+	}
 }
