@@ -1,6 +1,16 @@
 version: "3"
 
 services:
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: pgadmin@admin.pt
+      PGADMIN_DEFAULT_PASSWORD: password
+    ports:
+      - 5050:80
+    networks:
+      - data-pulse
+
   database:
     container_name: DataPulseDB
     image: postgres
