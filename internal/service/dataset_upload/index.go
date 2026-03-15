@@ -214,12 +214,6 @@ func ProcessJsonFile(f multipart.File) (jsonResults []map[string]any, validation
 	return jsonResults, validationErrors, nil
 }
 
-// func uploadCsvDataset(dataset [][]string) {
-// 	fmt.Println("Processing csv dataset ...")
-// 	// 1.
-
-// }
-
 func uploadJsonDataset(dataset []map[string]any) {
 	fmt.Println("Processing json dataset ...")
 
