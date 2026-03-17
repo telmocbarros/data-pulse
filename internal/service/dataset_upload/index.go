@@ -9,11 +9,11 @@ import (
 	"mime/multipart"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/telmocbarros/data-pulse/internal/models"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 )
 
-func ProcessCsvFile(f multipart.File) (results [][]any, validationErrors []ValidationError, err error) {
+func ProcessCsvFile(f multipart.File, fileName string) (results [][]any, validationErrors []ValidationError, err error) {
 	csvReader := csv.NewReader(f)
 	headers, err := csvReader.Read()
 	if err != nil {
@@ -34,8 +34,9 @@ func ProcessCsvFile(f multipart.File) (results [][]any, validationErrors []Valid
 	var jsonFormattedData []map[string]any
 
 	for idx, value := range content {
-		temp = append(temp, ParseValue(value))
-		jsonObj[headers[idx]] = value
+		parsed := ParseValue(value)
+		temp = append(temp, parsed)
+		jsonObj[headers[idx]] = parsed
 	}
 	results = append(results, temp)
 	jsonFormattedData = append(jsonFormattedData, jsonObj)
@@ -116,13 +117,17 @@ func ProcessCsvFile(f multipart.File) (results [][]any, validationErrors []Valid
 		rowNumber++
 	}
 
-	fmt.Println("FORMATTED JSON:", jsonFormattedData)
-	uploadJsonDataset(jsonFormattedData)
+	var dataset models.Dataset
+	dataset.Name = fileName
+	dataset.Data = jsonFormattedData
+	dataset.Columns = extractColumns(jsonFormattedData[0])
+
+	uploadJsonDataset(dataset)
 
 	return results, validationErrors, nil
 }
 
-func ProcessJsonFile(f multipart.File) (jsonResults []map[string]any, validationErrors []ValidationError, err error) {
+func ProcessJsonFile(f multipart.File, fileName string) (jsonResults []map[string]any, validationErrors []ValidationError, err error) {
 	decoder := json.NewDecoder(f)
 
 	// Consume opening '[' of the array
@@ -210,32 +215,57 @@ func ProcessJsonFile(f multipart.File) (jsonResults []map[string]any, validation
 		return nil, nil, fmt.Errorf("expected closing ']': %w", err)
 	}
 
-	uploadJsonDataset(jsonResults)
+	var dataset models.Dataset
+	dataset.Name = fileName
+	dataset.Data = jsonResults
+	dataset.Columns = extractColumns(jsonResults[0])
+
+	uploadJsonDataset(dataset)
 
 	return jsonResults, validationErrors, nil
 }
 
-func uploadJsonDataset(dataset []map[string]any) {
+func uploadJsonDataset(dataset models.Dataset) {
 	fmt.Println("Processing json dataset ...")
 
 	limit := 50
 	start := 0
 	end := limit
-	datasetId := uuid.New().String()
 
-	columns := extractColumns(dataset[0])
-
-	tableName, err := repository.CreateDatasetTable("", columns)
+	// 1. Create the dynamic table for this dataset
+	tableName, err := repository.CreateDatasetTable("", dataset.Columns)
 	if err != nil {
 		fmt.Println("Error while attempting to create a table: ", err)
 		return
 	}
 
-	for start < len(dataset) {
-		if end > len(dataset) {
-			end = len(dataset)
+	// 2. Store dataset metadata and get the generated dataset ID
+	metadata := map[string]any{
+		"name":        dataset.Name,
+		"tableName":   tableName,
+		"size":        len(dataset.Data),
+		"author":      "engineering",
+		"description": "description",
+	}
+
+	datasetId, err := repository.StoreDatasetMetadata(metadata)
+	if err != nil {
+		fmt.Println("Error adding dataset metadata")
+		return
+	}
+
+	// 3. Store dataset columns
+	if err := repository.StoreDatasetColumns(dataset.Columns, datasetId); err != nil {
+		fmt.Println("Error adding dataset columns")
+		return
+	}
+
+	// 4. Store dataset data in batches
+	for start < len(dataset.Data) {
+		if end > len(dataset.Data) {
+			end = len(dataset.Data)
 		}
-		if err := repository.StoreDataset(tableName, datasetId, dataset[start:end]); err != nil {
+		if err := repository.StoreDataset(tableName, datasetId, dataset.Data[start:end]); err != nil {
 			fmt.Println("Could not persist the dataset")
 			break
 		}

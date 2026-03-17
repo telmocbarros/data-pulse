@@ -67,16 +67,14 @@ func CreateDatasetTable(tableName string, columns [][]string) (string, error) {
 		tableName = fmt.Sprintf("json_datasets_%s", strings.ReplaceAll(uuid.New().String(), "-", ""))
 	}
 	var query strings.Builder
-	fmt.Fprintf(&query, "CREATE TABLE IF NOT EXISTS %s (id UUID PRIMARY KEY, dataset_id UUID, ", tableName)
+	fmt.Fprintf(&query, "CREATE TABLE IF NOT EXISTS %s (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), dataset_id UUID, ", tableName)
 	for j, col := range columns {
 		if j > 0 {
 			query.WriteString(", ")
 		}
 		if col[0] == "created_at" {
 			fmt.Fprintf(&query, "%s %s", "entry_date", mapToDatabase(col[1]))
-
 		} else {
-
 			fmt.Fprintf(&query, "%s %s", col[0], mapToDatabase(col[1]))
 		}
 	}
@@ -88,6 +86,39 @@ func CreateDatasetTable(tableName string, columns [][]string) (string, error) {
 	}
 
 	return tableName, nil
+}
+
+func StoreDatasetMetadata(metadata map[string]any) (string, error) {
+	query := "INSERT INTO datasets (file_name, table_name, uploaded_by, size, description) VALUES ($1, $2, $3, $4, $5) RETURNING id"
+
+	var id string
+	err := config.Storage.QueryRow(query, metadata["name"], metadata["tableName"], metadata["author"], metadata["size"], metadata["description"]).Scan(&id)
+	if err != nil {
+		fmt.Println("unable to execute insert query", err)
+		return "", err
+	}
+	fmt.Println("StoreDatasetMetadata: ", id)
+	return id, nil
+}
+
+func StoreDatasetColumns(columns [][]string, datasetId string) error {
+	var query strings.Builder
+	query.WriteString("INSERT INTO dataset_columns (dataset_id, column_name, column_type) VALUES ")
+	vals := []any{}
+	for i, col := range columns {
+		if i > 0 {
+			query.WriteString(", ")
+		}
+		query.WriteString(fmt.Sprintf("($%d, $%d, $%d)", i*3+1, i*3+2, i*3+3))
+		vals = append(vals, datasetId, col[0], col[1])
+	}
+
+	_, err := config.Storage.Exec(query.String(), vals...)
+	if err != nil {
+		fmt.Println("unable to insert dataset columns", err)
+		return err
+	}
+	return nil
 }
 
 func mapToDatabase(value string) string {
