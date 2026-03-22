@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/telmocbarros/data-pulse/internal/models"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 )
 
@@ -183,87 +182,144 @@ func ProcessJsonFile(f multipart.File, fileName string, fileSize int64) (jsonRes
 		return nil, nil, fmt.Errorf("expected JSON array, got %v", tok)
 	}
 
-	var columnKeys []string
-	var columnTypes map[string]string
+	// 1. Decode first row and extract column types
+	if !decoder.More() {
+		return nil, nil, fmt.Errorf("empty JSON array")
+	}
 
-	// Decode one object at a time while the array has more elements
-	rowNumber := int32(0)
-	for decoder.More() {
-		var row map[string]any
-		if err := decoder.Decode(&row); err != nil {
-			validationErrors = append(validationErrors, ValidationError{
-				Row:    rowNumber,
-				Column: -1,
-				Kind:   "malformed_row",
-				Detail: err.Error(),
-			})
-			rowNumber++
-			continue
+	var firstRow map[string]any
+	if err := decoder.Decode(&firstRow); err != nil {
+		return nil, nil, fmt.Errorf("error decoding first row: %w", err)
+	}
+
+	ReadJsonRowAndExtractType(firstRow)
+
+	columnKeys := make([]string, 0, len(firstRow))
+	for k := range firstRow {
+		columnKeys = append(columnKeys, k)
+	}
+	columnTypes := make(map[string]string, len(firstRow))
+	for k, v := range firstRow {
+		varType, err := ComputeVariableType(fmt.Sprintf("%v", v))
+		if err != nil {
+			return nil, nil, fmt.Errorf("error detecting type for column %q: %w", k, err)
 		}
+		columnTypes[k] = varType
+	}
+	log.Println("Column keys: ", columnKeys)
+	log.Println("Column types: ", columnTypes)
 
-		ReadJsonRowAndExtractType(row)
+	datasetColumns := extractColumns(firstRow)
 
-		if rowNumber == 0 {
-			// Extract column types from the first row
-			columnKeys = make([]string, 0, len(row))
-			for k := range row {
-				columnKeys = append(columnKeys, k)
-			}
-			columnTypes = make(map[string]string, len(row))
-			for k, v := range row {
-				varType, err := ComputeVariableType(fmt.Sprintf("%v", v))
-				if err != nil {
-					return nil, nil, fmt.Errorf("error detecting type for column %q: %w", k, err)
+	// 2. Create table and store metadata
+	tableName, err := repository.CreateDatasetTable("json", datasetColumns)
+	if err != nil {
+		fmt.Println("Error while attempting to create a table: ", err)
+		return
+	}
+
+	metadata := map[string]any{
+		"name":        fileName,
+		"tableName":   tableName,
+		"size":        fileSize,
+		"author":      "engineering",
+		"description": "description",
+	}
+
+	datasetId, err := repository.StoreDatasetMetadata(metadata)
+	if err != nil {
+		fmt.Println("Error adding dataset metadata")
+		return
+	}
+
+	if err = repository.StoreDatasetColumns(datasetColumns, datasetId); err != nil {
+		fmt.Println("Error adding dataset columns")
+		return
+	}
+
+	// 3. Process remaining rows with goroutines
+	errorsCh := make(chan ValidationError, 100)
+	dataCh := make(chan map[string]any, 100)
+
+	// send first row into dataCh
+	dataCh <- firstRow
+
+	go func() {
+		rowNumber := int32(1)
+		for decoder.More() {
+			var row map[string]any
+			if err := decoder.Decode(&row); err != nil {
+				errorsCh <- ValidationError{
+					Row:    rowNumber,
+					Column: -1,
+					Kind:   "malformed_row",
+					Detail: err.Error(),
 				}
-				columnTypes[k] = varType
+				rowNumber++
+				continue
 			}
-			log.Println("Column keys: ", columnKeys)
-			log.Println("Column types: ", columnTypes)
-		} else {
-			// Validate subsequent rows against first-row types
+
+			ReadJsonRowAndExtractType(row)
+
 			for _, k := range columnKeys {
 				v, exists := row[k]
 				if !exists {
-					validationErrors = append(validationErrors, ValidationError{
+					errorsCh <- ValidationError{
 						Row:    rowNumber,
 						Column: -1,
 						Kind:   "missing_value",
 						Detail: fmt.Sprintf("missing column %q", k),
-					})
+					}
 					continue
 				}
 				varType, err := ComputeVariableType(fmt.Sprintf("%v", v))
 				if err != nil {
-					return nil, nil, fmt.Errorf("error detecting type for column %q: %w", k, err)
+					fmt.Println("Error detecting type for column: ", err)
+					return
 				}
 				if varType != columnTypes[k] {
-					validationErrors = append(validationErrors, ValidationError{
+					errorsCh <- ValidationError{
 						Row:      rowNumber,
 						Column:   -1,
 						Kind:     "type_mismatch",
 						Expected: columnTypes[k],
 						Received: varType,
 						Detail:   fmt.Sprintf("column %q", k),
-					})
+					}
 				}
 			}
-		}
 
-		jsonResults = append(jsonResults, row)
-		rowNumber++
-	}
+			dataCh <- row
+			rowNumber++
+		}
+		close(dataCh)
+		close(errorsCh)
+	}()
+
+	var wg sync.WaitGroup
+
+	// collect validation errors
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for ve := range errorsCh {
+			validationErrors = append(validationErrors, ve)
+		}
+	}()
+
+	// upload data in batches
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		uploadJsonDataset(dataCh, tableName, datasetId)
+	}()
+
+	wg.Wait()
 
 	// Consume closing ']'
 	if _, err := decoder.Token(); err != nil {
 		return nil, nil, fmt.Errorf("expected closing ']': %w", err)
 	}
-
-	var dataset models.Dataset
-	dataset.Name = fileName
-	dataset.Data = jsonResults
-	dataset.Columns = extractColumns(jsonResults[0])
-
-	uploadJsonDataset(dataset, "json")
 
 	return jsonResults, validationErrors, nil
 }
