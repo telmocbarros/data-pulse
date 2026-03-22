@@ -7,11 +7,12 @@ import (
 	playground "github.com/telmocbarros/data-pulse/playground"
 )
 
-func main() {
+// use main when you want to play around the playground
+func execute() {
 	var userInput string
 
 	for {
-		displayMenu()
+		showMenu()
 		fmt.Print("Enter you choice: ")
 		fmt.Scanln(&userInput)
 		switch userInput {
@@ -36,7 +37,7 @@ func main() {
 	}
 }
 
-func displayMenu() {
+func showMenu() {
 	println("***************************")
 	println("* GO Concurrency Tutorial *")
 	println("***************************")
