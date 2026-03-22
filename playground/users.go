@@ -11,7 +11,7 @@ var firstNames = []string{"James", "Maria", "John", "Ana", "Pedro", "Sofia", "Li
 var lastNames = []string{"Smith", "Silva", "Johnson", "Garcia", "Brown", "Martinez", "Jones", "Lopez", "Davis", "Wilson"}
 
 func GenerateUsersPayload() []UserDTO {
-	users := make([]UserDTO, 250000)
+	users := make([]UserDTO, 1_000_000)
 
 	for i := range users {
 		first := firstNames[rand.Intn(len(firstNames))]
@@ -36,7 +36,7 @@ func GenerateUsersPayload() []UserDTO {
 }
 
 func GenerateUserPayloadWithConcurrency(usersCh chan<- UserDTO) {
-	users := make([]UserDTO, 250000)
+	users := make([]UserDTO, 1_000_000)
 	for i := range users {
 		first := firstNames[rand.Intn(len(firstNames))]
 		last := lastNames[rand.Intn(len(lastNames))]

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // registers pgx as a database/sql driver
@@ -120,6 +121,7 @@ func InsertingWithConcurrency() {
 
 	usersCh := make(chan UserDTO, 250)
 	dbUsersCh := make(chan CreateUserInput, 250)
+	batchCh := make(chan []CreateUserInput, 10)
 
 	go GenerateUserPayloadWithConcurrency(usersCh)
 
@@ -131,12 +133,59 @@ func InsertingWithConcurrency() {
 		close(dbUsersCh)
 	}()
 
-	err := createUsersDBWithConcurrency(db, dbUsersCh)
-	if err != nil {
-		fmt.Println("Error creating new user entities in the database. ", err)
+	// collect into batches
+	go func() {
+		batchLimit := 1000
+		batch := make([]CreateUserInput, 0, batchLimit)
+		for user := range dbUsersCh {
+			batch = append(batch, user)
+			if len(batch) == batchLimit {
+				batchCh <- batch
+				batch = make([]CreateUserInput, 0, batchLimit)
+			}
+		}
+		if len(batch) > 0 {
+			batchCh <- batch
+		}
+		close(batchCh)
+	}()
+
+	// parallel workers inserting batches
+	numWorkers := 5
+	var wg sync.WaitGroup
+	for range numWorkers {
+		// sames as
+		//   wg.Add(1)
+		//   go func ({})
+		wg.Go(func() {
+			for batch := range batchCh {
+				err := insertBatch(db, batch)
+				if err != nil {
+					fmt.Println("Error inserting batch: ", err)
+				}
+			}
+		})
 	}
+	wg.Wait()
 
 	fmt.Println("Elapsed time: ", time.Since(start))
+}
+
+func insertBatch(db *sql.DB, batch []CreateUserInput) error {
+	query := `INSERT INTO users (first_name, last_name, email, date_of_birth, username, password, country, phone) VALUES `
+	values := []any{}
+	placeholders := []string{}
+
+	for i, u := range batch {
+		base := i * 8
+		placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8))
+		values = append(values, u.FirstName, u.LastName, u.Email, u.DateOfBirth, u.Username, u.Password, u.Country, u.Phone)
+	}
+
+	query += strings.Join(placeholders, ", ")
+	_, err := db.Exec(query, values...)
+	return err
 }
 
 func fetchUsers(db *sql.DB, dbUsersCh chan<- UserDB) {
@@ -185,65 +234,7 @@ func createUsersDB(db *sql.DB, users []CreateUserInput) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Batch %d/%d inserted\n", j+1, numBatches)
 	}
-	return nil
-}
-
-func createUsersDBWithConcurrency(db *sql.DB, usersCh <-chan CreateUserInput) error {
-	query := `INSERT INTO users (first_name, last_name, email, date_of_birth, username, password, country, phone) VALUES `
-	batchCounter := 0
-	numBatches := 0
-	batchLimit := 1000
-	batch := make([]CreateUserInput, 0, batchLimit)
-
-	for value := range usersCh {
-		batch = append(batch, value)
-		batchCounter++
-		if batchCounter == batchLimit {
-			values := []any{}
-			placeholders := []string{}
-			for i, u := range batch {
-				base := i * 8
-				placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-					base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8))
-				values = append(values, u.FirstName, u.LastName, u.Email, u.DateOfBirth, u.Username, u.Password, u.Country, u.Phone)
-			}
-
-			batchQuery := query + strings.Join(placeholders, ", ")
-
-			_, err := db.Exec(batchQuery, values...)
-			if err != nil {
-				return err
-			}
-
-			batchCounter = 0
-			batch = batch[:0]
-			numBatches++
-			fmt.Printf("Batch %d inserted\n", numBatches)
-		}
-	}
-
-	if len(batch) > 0 {
-		values := []any{}
-		placeholders := []string{}
-		for i, u := range batch {
-			base := i * 8
-			placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8))
-			values = append(values, u.FirstName, u.LastName, u.Email, u.DateOfBirth, u.Username, u.Password, u.Country, u.Phone)
-		}
-
-		batchQuery := query + strings.Join(placeholders, ", ")
-
-		_, err := db.Exec(batchQuery, values...)
-		if err != nil {
-			return err
-		}
-		numBatches++
-		fmt.Printf("Batch %d inserted (remainder: %d users)\n", numBatches, len(batch))
-	}
-
 	return nil
 }
 

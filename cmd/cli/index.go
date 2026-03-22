@@ -25,7 +25,7 @@ func main() {
 			fmt.Println("Inserting WITHOUT concurrency ...")
 			playground.InsertingWithoutConcurrency()
 		case "4":
-			fmt.Println("Fetching WITH concurrency ...")
+			fmt.Println("Inserting WITH concurrency ...")
 			playground.InsertingWithConcurrency()
 		case "q":
 			fmt.Println("Goodbye!")
