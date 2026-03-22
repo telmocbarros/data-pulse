@@ -159,16 +159,10 @@ func ProcessCsvFile(f multipart.File, fileName string, fileSize int64) (results 
 		}
 	}()
 
-	dataset := models.Dataset{
-		Name:    fileName,
-		Columns: datasetColumns,
-		Size:    fileSize,
-	}
-
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		uploadJsonDataset(dataCh, dataset)
+		uploadJsonDataset(dataCh, tableName, datasetId)
 	}()
 
 	wg.Wait()
@@ -274,25 +268,28 @@ func ProcessJsonFile(f multipart.File, fileName string, fileSize int64) (jsonRes
 	return jsonResults, validationErrors, nil
 }
 
-func uploadJsonDataset(dataCh chan map[string]any, metadata models.Dataset) {
+func uploadJsonDataset(dataCh chan map[string]any, tableName string, datasetId string) {
 	fmt.Println("Processing dataset ...")
 
-	limit := 50
-	start := 0
-	end := limit
+	batchSize := 50
+	batch := make([]map[string]any, 0, batchSize)
 
-	// 4. Store dataset data in batches
-	for value := range dataCh {
-		if end > len(dataset.Data) {
-			end = len(dataset.Data)
+	for row := range dataCh {
+		batch = append(batch, row)
+		if len(batch) >= batchSize {
+			if err := repository.StoreDataset(tableName, datasetId, batch); err != nil {
+				fmt.Println("Could not persist the dataset")
+				return
+			}
+			batch = batch[:0]
 		}
-		if err := repository.StoreDataset(tableName, datasetId, dataset.Data[start:end]); err != nil {
+	}
+
+	// flush remaining rows
+	if len(batch) > 0 {
+		if err := repository.StoreDataset(tableName, datasetId, batch); err != nil {
 			fmt.Println("Could not persist the dataset")
-			break
 		}
-
-		start += limit
-		end += limit
 	}
 }
 
