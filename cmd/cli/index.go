@@ -35,7 +35,7 @@ func main() {
 			fmt.Println("Process CSV file ...")
 			data := loadFile("csv")
 			if data != nil {
-				record, validationErrors, err := service.ProcessCsvFile(bytesFile{bytes.NewReader(data)}, "sample_data.csv")
+				record, validationErrors, err := service.ProcessCsvFile(bytesFile{bytes.NewReader(data)}, "sample_data.csv", int64(len(data)))
 				if err != nil {
 					fmt.Println("Error parsing csv file.", err)
 					return
@@ -51,7 +51,7 @@ func main() {
 			fmt.Println("Process Json file ...")
 			data := loadFile("json")
 			if data != nil {
-				record, validationErrors, err := service.ProcessJsonFile(bytesFile{bytes.NewReader(data)}, "sample_data.json")
+				record, validationErrors, err := service.ProcessJsonFile(bytesFile{bytes.NewReader(data)}, "sample_data.json", int64(len(data)))
 				if err != nil {
 					fmt.Println("Error parsing JSON file. ", err)
 					return
