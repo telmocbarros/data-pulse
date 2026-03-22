@@ -15,13 +15,16 @@ import (
 
 func ProcessCsvFile(f multipart.File, fileName string) (results [][]any, validationErrors []ValidationError, err error) {
 	csvReader := csv.NewReader(f)
+
+	// 1. Read the file
 	headers, err := csvReader.Read()
 	if err != nil {
 		log.Println("Header format is invalid: ", err)
 		return nil, nil, err
 	}
 	log.Println("File headers: ", headers)
-	// extract the row filed types based on the first row with data
+
+	// 2. extract the row filed types based on the first row with data
 	content, row_field_types, err := ReadCsvRowAndExtractType(csvReader)
 	if err != nil {
 		log.Println("Something went wrong when extracting the row field types: ", err)
@@ -33,6 +36,7 @@ func ProcessCsvFile(f multipart.File, fileName string) (results [][]any, validat
 
 	var jsonFormattedData []map[string]any
 
+	// 3. Parsing the values of the first column
 	for idx, value := range content {
 		parsed := ParseValue(value)
 		temp = append(temp, parsed)
@@ -45,6 +49,10 @@ func ProcessCsvFile(f multipart.File, fileName string) (results [][]any, validat
 	// allow csv.Reader to handle rows with wrong field count
 	// instead of returning an error
 	csvReader.FieldsPerRecord = -1
+
+	// 4. Creating the metadata tables and the dataset's table
+
+	// 5. Go Routine Time
 
 	// reading remaining rows, validating types and flagging mismatches
 	rowNumber := int32(2) // row 1 was used for type extraction
@@ -122,7 +130,7 @@ func ProcessCsvFile(f multipart.File, fileName string) (results [][]any, validat
 	dataset.Data = jsonFormattedData
 	dataset.Columns = extractColumns(jsonFormattedData[0])
 
-	uploadJsonDataset(dataset)
+	uploadJsonDataset(dataset, "csv")
 
 	return results, validationErrors, nil
 }
@@ -220,20 +228,20 @@ func ProcessJsonFile(f multipart.File, fileName string) (jsonResults []map[strin
 	dataset.Data = jsonResults
 	dataset.Columns = extractColumns(jsonResults[0])
 
-	uploadJsonDataset(dataset)
+	uploadJsonDataset(dataset, "json")
 
 	return jsonResults, validationErrors, nil
 }
 
-func uploadJsonDataset(dataset models.Dataset) {
-	fmt.Println("Processing json dataset ...")
+func uploadJsonDataset(dataset models.Dataset, fileExtension string) {
+	fmt.Println("Processing dataset ...")
 
 	limit := 50
 	start := 0
 	end := limit
 
 	// 1. Create the dynamic table for this dataset
-	tableName, err := repository.CreateDatasetTable("", dataset.Columns)
+	tableName, err := repository.CreateDatasetTable(fileExtension, dataset.Columns)
 	if err != nil {
 		fmt.Println("Error while attempting to create a table: ", err)
 		return

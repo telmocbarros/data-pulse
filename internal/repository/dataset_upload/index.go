@@ -62,10 +62,10 @@ func StoreDataset(tableName string, datasetId string, rows []map[string]any) err
 	return nil
 }
 
-func CreateDatasetTable(tableName string, columns [][]string) (string, error) {
-	if tableName == "" {
-		tableName = fmt.Sprintf("json_datasets_%s", strings.ReplaceAll(uuid.New().String(), "-", ""))
-	}
+func CreateDatasetTable(fileExtension string, columns [][]string) (string, error) {
+
+	tableName := fmt.Sprintf("%s_datasets_%s", fileExtension, strings.ReplaceAll(uuid.New().String(), "-", ""))
+
 	var query strings.Builder
 	fmt.Fprintf(&query, "CREATE TABLE IF NOT EXISTS %s (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), dataset_id UUID, ", tableName)
 	for j, col := range columns {
