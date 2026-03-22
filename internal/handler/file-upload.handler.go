@@ -26,7 +26,7 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch handler.Header.Get("Content-Type") {
 	case "application/json":
-		record, validationErrors, err := service.ProcessJsonFile(file, handler.Filename)
+		record, validationErrors, err := service.ProcessJsonFile(file, handler.Filename, handler.Size)
 		if err != nil {
 			fmt.Println("Error parsing JSON file: ", err)
 			http.Error(w, "Error parsing JSON file", http.StatusInternalServerError)
@@ -38,7 +38,7 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Successfully parsed JSON file: %d rows, %d validation errors\n", len(record), len(validationErrors))
 
 	case "text/csv":
-		record, validationErrors, err := service.ProcessCsvFile(file, handler.Filename)
+		record, validationErrors, err := service.ProcessCsvFile(file, handler.Filename, handler.Size)
 		if err != nil {
 			http.Error(w, "Error parsing csv file", http.StatusInternalServerError)
 			return
