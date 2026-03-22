@@ -7,13 +7,14 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
+	"sync"
 	"time"
 
 	"github.com/telmocbarros/data-pulse/internal/models"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 )
 
-func ProcessCsvFile(f multipart.File, fileName string) (results [][]any, validationErrors []ValidationError, err error) {
+func ProcessCsvFile(f multipart.File, fileName string, fileSize int64) (results [][]any, validationErrors []ValidationError, err error) {
 	csvReader := csv.NewReader(f)
 
 	// 1. Read the file
@@ -30,112 +31,152 @@ func ProcessCsvFile(f multipart.File, fileName string) (results [][]any, validat
 		log.Println("Something went wrong when extracting the row field types: ", err)
 		return nil, nil, err
 	}
-	var temp []any
-
 	jsonObj := make(map[string]any)
 
-	var jsonFormattedData []map[string]any
-
-	// 3. Parsing the values of the first column
+	// 3. Parsing the values of the first row
 	for idx, value := range content {
-		parsed := ParseValue(value)
-		temp = append(temp, parsed)
-		jsonObj[headers[idx]] = parsed
+		jsonObj[headers[idx]] = ParseValue(value)
 	}
-	results = append(results, temp)
-	jsonFormattedData = append(jsonFormattedData, jsonObj)
 
 	log.Println("Column Types: ", row_field_types)
+	datasetColumns := extractColumns(jsonObj)
 	// allow csv.Reader to handle rows with wrong field count
 	// instead of returning an error
 	csvReader.FieldsPerRecord = -1
 
 	// 4. Creating the metadata tables and the dataset's table
+	// 4.1. Create the dynamic table for this dataset
+	tableName, err := repository.CreateDatasetTable("csv", datasetColumns)
+	if err != nil {
+		fmt.Println("Error while attempting to create a table: ", err)
+		return
+	}
+
+	// 4.2. Store dataset metadata and get the generated dataset ID
+	metadata := map[string]any{
+		"name":        fileName,
+		"tableName":   tableName,
+		"size":        fileSize,
+		"author":      "engineering",
+		"description": "description",
+	}
+
+	datasetId, err := repository.StoreDatasetMetadata(metadata)
+	if err != nil {
+		fmt.Println("Error adding dataset metadata")
+		return
+	}
+
+	// 4.3. Store dataset columns
+	if err = repository.StoreDatasetColumns(datasetColumns, datasetId); err != nil {
+		fmt.Println("Error adding dataset columns")
+		return
+	}
 
 	// 5. Go Routine Time
+	errorsCh := make(chan ValidationError, 100)
+	dataCh := make(chan map[string]any, 100)
 
 	// reading remaining rows, validating types and flagging mismatches
 	rowNumber := int32(2) // row 1 was used for type extraction
 	expectedColumns := len(row_field_types)
-	for {
-		record, err := csvReader.Read()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			// flag malformed rows (bad quoting, etc.) and continue
-			validationErrors = append(validationErrors, ValidationError{
-				Row:    rowNumber,
-				Column: -1,
-				Kind:   "malformed_row",
-				Detail: err.Error(),
-			})
-			rowNumber++
-			continue
-		}
-
-		// flag rows with wrong number of fields
-		if len(record) != expectedColumns {
-			validationErrors = append(validationErrors, ValidationError{
-				Row:      rowNumber,
-				Column:   -1,
-				Kind:     "malformed_row",
-				Expected: fmt.Sprintf("%d columns", expectedColumns),
-				Received: fmt.Sprintf("%d columns", len(record)),
-			})
-		}
-
-		var temp []any
-		jsonResult := make(map[string]any)
-		for idx, value := range record {
-
-			// flag missing values
-			if value == "" {
-				validationErrors = append(validationErrors, ValidationError{
+	go func() {
+		for {
+			record, err := csvReader.Read()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				// flag malformed rows (bad quoting, etc.) and continue
+				errorsCh <- ValidationError{
 					Row:    rowNumber,
-					Column: int32(idx),
-					Kind:   "missing_value",
-				})
-				temp = append(temp, ParseValue(value))
+					Column: -1,
+					Kind:   "malformed_row",
+					Detail: err.Error(),
+				}
+				rowNumber++
 				continue
 			}
 
-			// flag type mismatches (only for columns within expected range)
-			if idx < expectedColumns {
-				variableType, err := ComputeVariableType(value)
-				if err != nil {
-					fmt.Println("Error retrieving cell variable type: ", err)
-					return nil, nil, err
-				}
-				if row_field_types[idx] != variableType {
-					validationErrors = append(validationErrors, ValidationError{
-						Row:      rowNumber,
-						Column:   int32(idx),
-						Kind:     "type_mismatch",
-						Expected: row_field_types[idx],
-						Received: variableType,
-					})
+			// flag rows with wrong number of fields
+			if len(record) != expectedColumns {
+				errorsCh <- ValidationError{
+					Row:      rowNumber,
+					Column:   -1,
+					Kind:     "malformed_row",
+					Expected: fmt.Sprintf("%d columns", expectedColumns),
+					Received: fmt.Sprintf("%d columns", len(record)),
 				}
 			}
-			temp = append(temp, ParseValue(value))
-			jsonResult[headers[idx]] = ParseValue(value)
+
+			jsonResult := make(map[string]any)
+			for idx, value := range record {
+
+				// flag missing values
+				if value == "" {
+					errorsCh <- ValidationError{
+						Row:    rowNumber,
+						Column: int32(idx),
+						Kind:   "missing_value",
+					}
+					continue
+				}
+
+				// flag type mismatches (only for columns within expected range)
+				if idx < expectedColumns {
+					variableType, err := ComputeVariableType(value)
+					if err != nil {
+						fmt.Println("Error retrieving cell variable type: ", err)
+						return
+					}
+					if row_field_types[idx] != variableType {
+						errorsCh <- ValidationError{
+							Row:      rowNumber,
+							Column:   int32(idx),
+							Kind:     "type_mismatch",
+							Expected: row_field_types[idx],
+							Received: variableType,
+						}
+					}
+				}
+				jsonResult[headers[idx]] = ParseValue(value)
+			}
+			dataCh <- jsonResult
+			rowNumber++
 		}
-		jsonFormattedData = append(jsonFormattedData, jsonResult)
-		results = append(results, temp)
-		rowNumber++
+		close(dataCh)
+		close(errorsCh)
+	}()
+
+	var wg sync.WaitGroup
+
+	// collect validation errors from the channel
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for ve := range errorsCh {
+			validationErrors = append(validationErrors, ve)
+		}
+	}()
+
+	dataset := models.Dataset{
+		Name:    fileName,
+		Columns: datasetColumns,
+		Size:    fileSize,
 	}
 
-	var dataset models.Dataset
-	dataset.Name = fileName
-	dataset.Data = jsonFormattedData
-	dataset.Columns = extractColumns(jsonFormattedData[0])
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		uploadJsonDataset(dataCh, dataset)
+	}()
 
-	uploadJsonDataset(dataset, "csv")
+	wg.Wait()
 
 	return results, validationErrors, nil
 }
 
-func ProcessJsonFile(f multipart.File, fileName string) (jsonResults []map[string]any, validationErrors []ValidationError, err error) {
+func ProcessJsonFile(f multipart.File, fileName string, fileSize int64) (jsonResults []map[string]any, validationErrors []ValidationError, err error) {
 	decoder := json.NewDecoder(f)
 
 	// Consume opening '[' of the array
@@ -233,43 +274,15 @@ func ProcessJsonFile(f multipart.File, fileName string) (jsonResults []map[strin
 	return jsonResults, validationErrors, nil
 }
 
-func uploadJsonDataset(dataset models.Dataset, fileExtension string) {
+func uploadJsonDataset(dataCh chan map[string]any, metadata models.Dataset) {
 	fmt.Println("Processing dataset ...")
 
 	limit := 50
 	start := 0
 	end := limit
 
-	// 1. Create the dynamic table for this dataset
-	tableName, err := repository.CreateDatasetTable(fileExtension, dataset.Columns)
-	if err != nil {
-		fmt.Println("Error while attempting to create a table: ", err)
-		return
-	}
-
-	// 2. Store dataset metadata and get the generated dataset ID
-	metadata := map[string]any{
-		"name":        dataset.Name,
-		"tableName":   tableName,
-		"size":        len(dataset.Data),
-		"author":      "engineering",
-		"description": "description",
-	}
-
-	datasetId, err := repository.StoreDatasetMetadata(metadata)
-	if err != nil {
-		fmt.Println("Error adding dataset metadata")
-		return
-	}
-
-	// 3. Store dataset columns
-	if err := repository.StoreDatasetColumns(dataset.Columns, datasetId); err != nil {
-		fmt.Println("Error adding dataset columns")
-		return
-	}
-
 	// 4. Store dataset data in batches
-	for start < len(dataset.Data) {
+	for value := range dataCh {
 		if end > len(dataset.Data) {
 			end = len(dataset.Data)
 		}
