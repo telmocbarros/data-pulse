@@ -72,21 +72,43 @@ func ProcessCsvFile(f multipart.File, fileName string, fileSize int64) (results 
 		return
 	}
 
-	// 5. Go Routine Time
+	// 5. Concurrent pipeline: parse → validate → store
+	//
+	// Stage 1 (parser):   reads CSV rows, attaches row numbers, sends to parserCh.
+	//                     Column-count mismatches are caught here.
+	// Stage 2 (validator): checks types and missing values, sends valid rows to dataCh.
+	// Stage 3 (store):     batches rows from dataCh and writes to DB.
+	// Error collector:     drains errorsCh (fed by both stage 1 and 2) into validationErrors.
+	//
+	// errorsCh is closed only after both producers (parser + validator) are done,
+	// coordinated via errWg.
+
+	type numberedRecord struct {
+		Row    int32
+		Record []string
+	}
+
 	errorsCh := make(chan ValidationError, 100)
+	parserCh := make(chan numberedRecord, 100)
 	dataCh := make(chan map[string]any, 100)
 
-	// reading remaining rows, validating types and flagging mismatches
-	rowNumber := int32(2) // row 1 was used for type extraction
 	expectedColumns := len(row_field_types)
-	go func() {
+
+	// errWg tracks goroutines that write to errorsCh so we can
+	// close it safely after both the parser and validator finish.
+	var errWg sync.WaitGroup
+
+	// Stage 1: Parse — read raw CSV rows and send them downstream
+	errWg.Go(func() {
+		defer close(parserCh)
+
+		rowNumber := int32(2) // row 1 was used for type extraction
 		for {
 			record, err := csvReader.Read()
 			if err != nil {
 				if err == io.EOF {
 					break
 				}
-				// flag malformed rows (bad quoting, etc.) and continue
 				errorsCh <- ValidationError{
 					Row:    rowNumber,
 					Column: -1,
@@ -97,7 +119,6 @@ func ProcessCsvFile(f multipart.File, fileName string, fileSize int64) (results 
 				continue
 			}
 
-			// flag rows with wrong number of fields
 			if len(record) != expectedColumns {
 				errorsCh <- ValidationError{
 					Row:      rowNumber,
@@ -108,20 +129,28 @@ func ProcessCsvFile(f multipart.File, fileName string, fileSize int64) (results 
 				}
 			}
 
-			jsonResult := make(map[string]any)
-			for idx, value := range record {
+			parserCh <- numberedRecord{Row: rowNumber, Record: record}
+			rowNumber++
+		}
+	})
 
-				// flag missing values
+	// Stage 2: Validate — check types and missing values, forward valid rows to dataCh
+	errWg.Go(func() {
+		defer close(dataCh)
+
+		for nr := range parserCh {
+			jsonResult := make(map[string]any)
+			for idx, value := range nr.Record {
+
 				if value == "" {
 					errorsCh <- ValidationError{
-						Row:    rowNumber,
+						Row:    nr.Row,
 						Column: int32(idx),
 						Kind:   "missing_value",
 					}
 					continue
 				}
 
-				// flag type mismatches (only for columns within expected range)
 				if idx < expectedColumns {
 					variableType, err := ComputeVariableType(value)
 					if err != nil {
@@ -130,7 +159,7 @@ func ProcessCsvFile(f multipart.File, fileName string, fileSize int64) (results 
 					}
 					if row_field_types[idx] != variableType {
 						errorsCh <- ValidationError{
-							Row:      rowNumber,
+							Row:      nr.Row,
 							Column:   int32(idx),
 							Kind:     "type_mismatch",
 							Expected: row_field_types[idx],
@@ -141,28 +170,28 @@ func ProcessCsvFile(f multipart.File, fileName string, fileSize int64) (results 
 				jsonResult[headers[idx]] = ParseValue(value)
 			}
 			dataCh <- jsonResult
-			rowNumber++
 		}
-		close(dataCh)
+	})
+
+	// Close errorsCh once both producers (parser + validator) are done
+	go func() {
+		errWg.Wait()
 		close(errorsCh)
 	}()
 
 	var wg sync.WaitGroup
 
-	// collect validation errors from the channel
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	// Error collector — drains errorsCh into the returned validationErrors slice
+	wg.Go(func() {
 		for ve := range errorsCh {
 			validationErrors = append(validationErrors, ve)
 		}
-	}()
+	})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	// Stage 3: Store — batches rows from dataCh and writes to DB
+	wg.Go(func() {
 		uploadJsonDataset(dataCh, tableName, datasetId)
-	}()
+	})
 
 	wg.Wait()
 
@@ -245,6 +274,10 @@ func ProcessJsonFile(f multipart.File, fileName string, fileSize int64) (jsonRes
 	dataCh <- firstRow
 
 	go func() {
+
+	}()
+
+	go func() {
 		rowNumber := int32(1)
 		for decoder.More() {
 			var row map[string]any
@@ -321,6 +354,7 @@ func ProcessJsonFile(f multipart.File, fileName string, fileSize int64) (jsonRes
 		return nil, nil, fmt.Errorf("expected closing ']': %w", err)
 	}
 
+	jsonResults = append(jsonResults, firstRow)
 	return jsonResults, validationErrors, nil
 }
 
