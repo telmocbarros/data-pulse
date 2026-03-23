@@ -35,15 +35,11 @@ func main() {
 			fmt.Println("Process CSV file ...")
 			data := loadFile("csv")
 			if data != nil {
-				record, validationErrors, err := service.ProcessCsvFile(bytesFile{bytes.NewReader(data)}, "sample_data.csv", int64(len(data)))
-				if err != nil {
-					fmt.Println("Error parsing csv file.", err)
-					return
-				}
+				validationErrors := service.ProcessCsvFileSync(bytesFile{bytes.NewReader(data)}, "sample_data.csv", int64(len(data)))
 				if len(validationErrors) > 0 {
 					log.Printf("CSV parsed with %d validation errors\n", len(validationErrors))
 				}
-				fmt.Printf("Successfully parsed CSV file: %d rows, %d validation errors\n", len(record), len(validationErrors))
+				fmt.Printf("Successfully parsed CSV file, %d validation errors\n", len(validationErrors))
 
 			}
 
@@ -51,15 +47,11 @@ func main() {
 			fmt.Println("Process Json file ...")
 			data := loadFile("json")
 			if data != nil {
-				record, validationErrors, err := service.ProcessJsonFile(bytesFile{bytes.NewReader(data)}, "sample_data.json", int64(len(data)))
-				if err != nil {
-					fmt.Println("Error parsing JSON file. ", err)
-					return
-				}
+				validationErrors := service.ProcessJsonFileSync(bytesFile{bytes.NewReader(data)}, "sample_data.json", int64(len(data)))
 				if len(validationErrors) > 0 {
 					log.Printf("JSON parsed with %d validation errors\n", len(validationErrors))
 				}
-				fmt.Printf("Successfully parsed JSON file: %d rows, %d validation errors\n", len(record), len(validationErrors))
+				fmt.Printf("Successfully parsed JSON file, %d validation errors\n", len(validationErrors))
 			}
 		case "q":
 			fmt.Println("Goodbye!")

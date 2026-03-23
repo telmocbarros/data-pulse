@@ -2,7 +2,6 @@ package handler
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 
 	service "github.com/telmocbarros/data-pulse/internal/service/dataset_upload"
@@ -26,27 +25,22 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch handler.Header.Get("Content-Type") {
 	case "application/json":
-		record, validationErrors, err := service.ProcessJsonFile(file, handler.Filename, handler.Size)
-		if err != nil {
+		if err := service.ProcessJsonFileAsync(file, handler.Filename, handler.Size); err != nil {
 			fmt.Println("Error parsing JSON file: ", err)
 			http.Error(w, "Error parsing JSON file", http.StatusInternalServerError)
 			return
 		}
-		if len(validationErrors) > 0 {
-			log.Printf("JSON parsed with %d validation errors\n", len(validationErrors))
-		}
-		fmt.Fprintf(w, "Successfully parsed JSON file: %d rows, %d validation errors\n", len(record), len(validationErrors))
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprintf(w, `{"status": "accepted"}`)
 
 	case "text/csv":
-		record, validationErrors, err := service.ProcessCsvFile(file, handler.Filename, handler.Size)
-		if err != nil {
-			http.Error(w, "Error parsing csv file", http.StatusInternalServerError)
+		if err := service.ProcessCsvFileAsync(file, handler.Filename, handler.Size); err != nil {
+			fmt.Println("Error parsing CSV file: ", err)
+			http.Error(w, "Error parsing CSV file", http.StatusInternalServerError)
 			return
 		}
-		if len(validationErrors) > 0 {
-			log.Printf("CSV parsed with %d validation errors\n", len(validationErrors))
-		}
-		fmt.Fprintf(w, "Successfully parsed CSV file: %d rows, %d validation errors\n", len(record), len(validationErrors))
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprintf(w, `{"status": "accepted"}`)
 	default:
 		http.Error(w, "Unsupported file type", http.StatusBadRequest)
 	}
