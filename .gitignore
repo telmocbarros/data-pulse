@@ -1,3 +1,2 @@
 .env
-/sample_data.json
-/sample_data.csv
+sample_data.*
