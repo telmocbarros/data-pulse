@@ -9,8 +9,6 @@ import (
 
 	"github.com/telmocbarros/data-pulse/config"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
-	profilerRepo "github.com/telmocbarros/data-pulse/internal/repository/profiler"
-	"github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
 
 type numberedJsonRow struct {
@@ -157,11 +155,9 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 	var validationErrors []ValidationError
 
 	dataCh := make(chan map[string]any, 100)
-	profilerCh := make(chan map[string]any, 100)
 
-	// Send first row straight to both channels (already validated during setup)
+	// Send first row straight to dataCh (already validated during setup)
 	dataCh <- state.firstRow
-	profilerCh <- state.firstRow
 
 	var wg sync.WaitGroup
 
@@ -169,13 +165,6 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 	wg.Go(func() {
 		for ve := range state.errorsCh {
 			validationErrors = append(validationErrors, ve)
-		}
-	})
-
-	wg.Go(func() {
-		result := profiler.ProfileDataset(profilerCh, state.columnTypes)
-		if err := profilerRepo.StoreProfile(state.datasetId, result); err != nil {
-			fmt.Println("Error storing profile:", err)
 		}
 	})
 
@@ -189,7 +178,6 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 	// Stage 2: Validate — check types and missing columns, forward valid rows to dataCh
 	errWg.Go(func() {
 		defer close(dataCh)
-		defer close(profilerCh)
 
 		progressFn(30)
 
@@ -238,11 +226,6 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 
 			select {
 			case dataCh <- nr.Data:
-			case <-ctx.Done():
-				return
-			}
-			select {
-			case profilerCh <- nr.Data:
 			case <-ctx.Done():
 				return
 			}
