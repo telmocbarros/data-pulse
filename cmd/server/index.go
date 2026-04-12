@@ -28,9 +28,15 @@ func main() {
 	http.HandleFunc("/api/datasets/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/datasets/")
 
-		// POST /api/datasets/ — upload a new dataset
-		if path == "" && r.Method == http.MethodPost {
-			handler.FileUploadHandler(w, r)
+		if path == "" {
+			switch r.Method {
+			case http.MethodGet:
+				handler.ListDatasetsHandler(w, r)
+			case http.MethodPost:
+				handler.FileUploadHandler(w, r)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
 			return
 		}
 
