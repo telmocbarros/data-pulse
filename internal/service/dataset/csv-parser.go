@@ -1,11 +1,11 @@
 package dataset
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
 	"log"
-	"mime/multipart"
 	"sync"
 
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
@@ -26,30 +26,21 @@ type csvPipelineState struct {
 	datasetId     string
 }
 
-// ProcessCsvFileAsync parses the file synchronously (Stage 1),
-// then launches validate + store (Stages 2+3) in the background.
-func ProcessCsvFileAsync(f multipart.File, fileName string, fileSize int64) error {
-	state, err := parseCsvFile(f, fileName, fileSize)
+// ProcessCsvFile runs the full CSV pipeline synchronously.
+// It is meant to be called from within a job goroutine.
+func ProcessCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize int64, progressFn func(int)) error {
+	state, err := parseCsvFile(ctx, f, fileName, fileSize)
 	if err != nil {
 		return err
 	}
-	go runCsvPipeline(state)
-	return nil
-}
-
-func ProcessCsvFileSync(f multipart.File, fileName string, fileSize int64) []ValidationError {
-	state, err := parseCsvFile(f, fileName, fileSize)
-	if err != nil {
-		return nil
-	}
-
-	return runCsvPipeline(state)
+	progressFn(10)
+	return runCsvPipeline(ctx, state, progressFn)
 }
 
 // parseCsvFile reads the file, creates metadata, and runs Stage 1 (parsing).
 // It returns a csvPipelineState that contains the channels for Stages 2+3.
 // The file is fully consumed when this function returns.
-func parseCsvFile(f multipart.File, fileName string, fileSize int64) (*csvPipelineState, error) {
+func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize int64) (*csvPipelineState, error) {
 	csvReader := csv.NewReader(f)
 
 	// 1. Read the file
@@ -112,6 +103,12 @@ func parseCsvFile(f multipart.File, fileName string, fileSize int64) (*csvPipeli
 
 		rowNumber := int32(2) // row 1 was used for type extraction
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			record, err := csvReader.Read()
 			if err != nil {
 				if err == io.EOF {
@@ -154,11 +151,25 @@ func parseCsvFile(f multipart.File, fileName string, fileSize int64) (*csvPipeli
 
 // runCsvPipeline runs Stages 2 (validate) and 3 (store) of the CSV pipeline.
 // It does not need the file — it consumes from the channels in csvPipelineState.
-func runCsvPipeline(state *csvPipelineState) []ValidationError {
+func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn func(int)) error {
 	var validationErrors []ValidationError
 
 	dataCh := make(chan map[string]any, 100)
 	expectedColumns := len(state.rowFieldTypes)
+
+	var wg sync.WaitGroup
+
+	// Error collector — drains errorsCh into the returned validationErrors slice
+	wg.Go(func() {
+		for ve := range state.errorsCh {
+			validationErrors = append(validationErrors, ve)
+		}
+	})
+
+	// Stage 3: Store — batches rows from dataCh and writes to DB
+	wg.Go(func() {
+		uploadJsonDataset(ctx, dataCh, state.tableName, state.datasetId, progressFn)
+	})
 
 	// errWg tracks goroutines that write to errorsCh so we can
 	// close it safely after both the parser and validator finish.
@@ -168,7 +179,15 @@ func runCsvPipeline(state *csvPipelineState) []ValidationError {
 	errWg.Go(func() {
 		defer close(dataCh)
 
+		progressFn(30)
+
 		for nr := range state.parserCh {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			jsonResult := make(map[string]any)
 			for idx, value := range nr.Record {
 
@@ -200,7 +219,11 @@ func runCsvPipeline(state *csvPipelineState) []ValidationError {
 				jsonResult[state.headers[idx]] = ParseValue(value)
 			}
 
-			dataCh <- jsonResult
+			select {
+			case dataCh <- jsonResult:
+			case <-ctx.Done():
+				return
+			}
 		}
 	})
 
@@ -210,21 +233,15 @@ func runCsvPipeline(state *csvPipelineState) []ValidationError {
 		close(state.errorsCh)
 	}()
 
-	var wg sync.WaitGroup
-
-	// Error collector — drains errorsCh into the returned validationErrors slice
-	wg.Go(func() {
-		for ve := range state.errorsCh {
-			validationErrors = append(validationErrors, ve)
-		}
-	})
-
-	// Stage 3: Store — batches rows from dataCh and writes to DB
-	wg.Go(func() {
-		uploadJsonDataset(dataCh, state.tableName, state.datasetId)
-	})
-
 	wg.Wait()
 
-	return validationErrors
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	if len(validationErrors) > 0 {
+		fmt.Printf("Completed with %d validation errors\n", len(validationErrors))
+	}
+
+	return nil
 }

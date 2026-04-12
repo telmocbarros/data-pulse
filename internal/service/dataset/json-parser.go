@@ -1,9 +1,10 @@
 package dataset
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"mime/multipart"
+	"io"
 	"sync"
 
 	"github.com/telmocbarros/data-pulse/config"
@@ -26,26 +27,20 @@ type jsonPipelineState struct {
 	firstRow    map[string]any
 }
 
-func ProcessJsonFileAsync(f multipart.File, fileName string, fileSize int64) error {
-	state, err := parseJsonFile(f, fileName, fileSize)
+// ProcessJsonFile runs the full JSON pipeline synchronously.
+// It is meant to be called from within a job goroutine.
+func ProcessJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize int64, progressFn func(int)) error {
+	state, err := parseJsonFile(ctx, f, fileName, fileSize)
 	if err != nil {
 		return err
 	}
-	go runJsonPipeline(state)
-	return nil
-}
-
-func ProcessJsonFileSync(f multipart.File, fileName string, fileSize int64) []ValidationError {
-	state, err := parseJsonFile(f, fileName, fileSize)
-	if err != nil {
-		return nil
-	}
-	return runJsonPipeline(state)
+	progressFn(10)
+	return runJsonPipeline(ctx, state, progressFn)
 }
 
 // parseJsonFile reads the file, creates metadata, and runs Stage 1 (parsing).
 // The file is fully consumed when this function returns.
-func parseJsonFile(f multipart.File, fileName string, fileSize int64) (*jsonPipelineState, error) {
+func parseJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize int64) (*jsonPipelineState, error) {
 	decoder := json.NewDecoder(f)
 
 	// Consume opening '[' of the array
@@ -117,6 +112,12 @@ func parseJsonFile(f multipart.File, fileName string, fileSize int64) (*jsonPipe
 
 		rowNumber := int32(1) // row 0 was used for type extraction
 		for decoder.More() {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			var row map[string]any
 			if err := decoder.Decode(&row); err != nil {
 				errorsCh <- ValidationError{
@@ -147,13 +148,13 @@ func parseJsonFile(f multipart.File, fileName string, fileSize int64) (*jsonPipe
 }
 
 // runJsonPipeline runs Stages 2 (validate) and 3 (store) of the JSON pipeline.
-func runJsonPipeline(state *jsonPipelineState) []ValidationError {
+func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn func(int)) error {
 	var validationErrors []ValidationError
 
 	dataCh := make(chan map[string]any, 100)
 	profilerCh := make(chan map[string]any, 100)
 
-	// Send first row straight to dataCh (already validated during setup)
+	// Send first row straight to both channels (already validated during setup)
 	dataCh <- state.firstRow
 	profilerCh <- state.firstRow
 
@@ -172,7 +173,7 @@ func runJsonPipeline(state *jsonPipelineState) []ValidationError {
 
 	// Stage 3: Store — batches rows from dataCh and writes to DB
 	wg.Go(func() {
-		uploadJsonDataset(dataCh, state.tableName, state.datasetId)
+		uploadJsonDataset(ctx, dataCh, state.tableName, state.datasetId, progressFn)
 	})
 
 	var errWg sync.WaitGroup
@@ -182,7 +183,15 @@ func runJsonPipeline(state *jsonPipelineState) []ValidationError {
 		defer close(dataCh)
 		defer close(profilerCh)
 
+		progressFn(30)
+
 		for nr := range state.parserCh {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			for _, k := range state.columnKeys {
 				v, exists := nr.Data[k]
 				if !exists {
@@ -210,8 +219,17 @@ func runJsonPipeline(state *jsonPipelineState) []ValidationError {
 					}
 				}
 			}
-			dataCh <- nr.Data
-			profilerCh <- nr.Data
+
+			select {
+			case dataCh <- nr.Data:
+			case <-ctx.Done():
+				return
+			}
+			select {
+			case profilerCh <- nr.Data:
+			case <-ctx.Done():
+				return
+			}
 		}
 	})
 
@@ -223,10 +241,18 @@ func runJsonPipeline(state *jsonPipelineState) []ValidationError {
 
 	wg.Wait()
 
-	return validationErrors
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	if len(validationErrors) > 0 {
+		fmt.Printf("Completed with %d validation errors\n", len(validationErrors))
+	}
+
+	return nil
 }
 
-func uploadJsonDataset(dataCh chan map[string]any, tableName string, datasetId string) {
+func uploadJsonDataset(ctx context.Context, dataCh chan map[string]any, tableName string, datasetId string, progressFn func(int)) {
 	fmt.Println("Processing dataset ...")
 
 	tx, err := config.Storage.Begin()
@@ -238,14 +264,24 @@ func uploadJsonDataset(dataCh chan map[string]any, tableName string, datasetId s
 
 	batchSize := 50
 	batch := make([]map[string]any, 0, batchSize)
+	batchCount := 0
 
 	for row := range dataCh {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		batch = append(batch, row)
 		if len(batch) >= batchSize {
 			if err := repository.StoreDataset(tx, tableName, datasetId, batch); err != nil {
 				fmt.Println("Could not persist the dataset")
 				return
 			}
+			batchCount++
+			progress := 40 + min(batchCount*5, 55)
+			progressFn(progress)
 			batch = batch[:0]
 		}
 	}
