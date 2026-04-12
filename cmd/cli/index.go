@@ -58,6 +58,8 @@ func main() {
 					runProfiler(datasetId)
 				}
 			}
+		case "3":
+			listDatasets()
 		case "q":
 			fmt.Println("Goodbye!")
 			os.Exit(0)
@@ -74,6 +76,7 @@ func displayMenu() {
 
 	println("1. Process CSV File")
 	println("2. Process Json File")
+	println("3. List Datasets")
 	println("q. exit")
 }
 
@@ -88,6 +91,32 @@ func runProfiler(datasetId string) {
 		return
 	}
 	fmt.Println("Successfully profiled dataset")
+}
+
+func listDatasets() {
+	datasets, err := repository.ListDatasets()
+	if err != nil {
+		log.Printf("Error fetching datasets: %v\n", err)
+		return
+	}
+
+	if len(datasets) == 0 {
+		fmt.Println("\nNo datasets found.")
+		return
+	}
+
+	fmt.Println()
+	fmt.Printf("%-36s  %-20s  %10s  %-15s  %-20s\n", "ID", "File Name", "Size", "Uploaded By", "Created At")
+	fmt.Println("------------------------------------  --------------------  ----------  ---------------  --------------------")
+	for _, d := range datasets {
+		createdAt := fmt.Sprintf("%v", d["created_at"])
+		if len(createdAt) > 19 {
+			createdAt = createdAt[:19]
+		}
+		fmt.Printf("%-36s  %-20s  %10d  %-15s  %-20s\n",
+			d["id"], d["file_name"], d["size"], d["uploaded_by"], createdAt)
+	}
+	fmt.Printf("\nTotal: %d dataset(s)\n", len(datasets))
 }
 
 func storeFile(datasetId string, filePath string, fileName string) {
