@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	"github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
 
 type numberedRecord struct {
@@ -22,6 +23,7 @@ type csvPipelineState struct {
 	errorsCh      chan ValidationError
 	headers       []string
 	rowFieldTypes []string
+	columnTypes   map[string]string
 	tableName     string
 	datasetId     string
 }
@@ -65,6 +67,12 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 	}
 
 	log.Println("Column Types: ", row_field_types)
+	columnTypes := make(map[string]string, len(headers))
+	for i, h := range headers {
+		if i < len(row_field_types) {
+			columnTypes[h] = row_field_types[i]
+		}
+	}
 	datasetColumns := extractColumns(jsonObj)
 	// allow csv.Reader to handle rows with wrong field count
 	// instead of returning an error
@@ -152,6 +160,7 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 		errorsCh:      errorsCh,
 		headers:       headers,
 		rowFieldTypes: row_field_types,
+		columnTypes:   columnTypes,
 		tableName:     tableName,
 		datasetId:     datasetId,
 	}, nil
@@ -163,6 +172,7 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 	var validationErrors []ValidationError
 
 	dataCh := make(chan map[string]any, 100)
+	profilerCh := make(chan map[string]any, 100)
 	expectedColumns := len(state.rowFieldTypes)
 
 	var wg sync.WaitGroup
@@ -172,6 +182,10 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 		for ve := range state.errorsCh {
 			validationErrors = append(validationErrors, ve)
 		}
+	})
+
+	wg.Go(func() {
+		profiler.ProfileDataset(profilerCh, state.columnTypes)
 	})
 
 	// Stage 3: Store — batches rows from dataCh and writes to DB
@@ -186,6 +200,7 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 	// Stage 2: Validate — check types and missing values, forward valid rows to dataCh
 	errWg.Go(func() {
 		defer close(dataCh)
+		defer close(profilerCh)
 
 		progressFn(30)
 
@@ -237,6 +252,11 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 
 			select {
 			case dataCh <- jsonResult:
+			case <-ctx.Done():
+				return
+			}
+			select {
+			case profilerCh <- jsonResult:
 			case <-ctx.Done():
 				return
 			}
