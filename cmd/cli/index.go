@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -10,21 +11,11 @@ import (
 	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
 )
 
-/*
-- You need to wrap the []byte to satisfy multipart.File. But actually, the service functions only use io.Reader capabilities (csv.NewReader(f), json.NewDecoder(f)).
-- The cleaner fix would be to change the service to accept io.ReadSeekCloser instead of multipart.File — then both the API and CLI can use it.
-- bytesFile wraps bytes.Reader (which already satisfies io.Reader, io.ReaderAt, io.Seeker)
-- and adds a no-op Close() — that's all multipart.File
-*/
-type bytesFile struct {
-	*bytes.Reader
-}
-
-func (b bytesFile) Close() error { return nil }
-
 func main() {
 	storage.SetupDatabase()
 	var userInput string
+
+	noopProgress := func(int) {}
 
 	for {
 		displayMenu()
@@ -35,23 +26,24 @@ func main() {
 			fmt.Println("Process CSV file ...")
 			data := loadFile("csv")
 			if data != nil {
-				validationErrors := service.ProcessCsvFileSync(bytesFile{bytes.NewReader(data)}, "sample_data.csv", int64(len(data)))
-				if len(validationErrors) > 0 {
-					log.Printf("CSV parsed with %d validation errors\n", len(validationErrors))
+				err := service.ProcessCsvFile(context.Background(), bytes.NewReader(data), "sample_data.csv", int64(len(data)), noopProgress)
+				if err != nil {
+					log.Printf("CSV processing error: %v\n", err)
+				} else {
+					fmt.Println("Successfully parsed CSV file")
 				}
-				fmt.Printf("Successfully parsed CSV file, %d validation errors\n", len(validationErrors))
-
 			}
 
 		case "2":
 			fmt.Println("Process Json file ...")
 			data := loadFile("json")
 			if data != nil {
-				validationErrors := service.ProcessJsonFileSync(bytesFile{bytes.NewReader(data)}, "sample_data.json", int64(len(data)))
-				if len(validationErrors) > 0 {
-					log.Printf("JSON parsed with %d validation errors\n", len(validationErrors))
+				err := service.ProcessJsonFile(context.Background(), bytes.NewReader(data), "sample_data.json", int64(len(data)), noopProgress)
+				if err != nil {
+					log.Printf("JSON processing error: %v\n", err)
+				} else {
+					fmt.Println("Successfully parsed JSON file")
 				}
-				fmt.Printf("Successfully parsed JSON file, %d validation errors\n", len(validationErrors))
 			}
 		case "q":
 			fmt.Println("Goodbye!")
