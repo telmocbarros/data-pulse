@@ -1,4 +1,4 @@
-package service
+package models
 
 type HistogramBucket struct {
 	Min   float64
