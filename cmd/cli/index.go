@@ -33,26 +33,28 @@ func main() {
 		switch userInput {
 		case "1":
 			fmt.Println("Process CSV file ...")
-			data := loadFile("csv")
+			data, filePath := loadFile("csv")
 			if data != nil {
 				datasetId, err := service.ProcessCsvFile(context.Background(), bytes.NewReader(data), "sample_data.csv", int64(len(data)), noopProgress)
 				if err != nil {
 					log.Printf("CSV processing error: %v\n", err)
 				} else {
 					fmt.Println("Successfully parsed CSV file")
+					storeFile(datasetId, filePath, "sample_data.csv")
 					runProfiler(datasetId)
 				}
 			}
 
 		case "2":
 			fmt.Println("Process Json file ...")
-			data := loadFile("json")
+			data, filePath := loadFile("json")
 			if data != nil {
 				datasetId, err := service.ProcessJsonFile(context.Background(), bytes.NewReader(data), "sample_data.json", int64(len(data)), noopProgress)
 				if err != nil {
 					log.Printf("JSON processing error: %v\n", err)
 				} else {
 					fmt.Println("Successfully parsed JSON file")
+					storeFile(datasetId, filePath, "sample_data.json")
 					runProfiler(datasetId)
 				}
 			}
@@ -88,7 +90,15 @@ func runProfiler(datasetId string) {
 	fmt.Println("Successfully profiled dataset")
 }
 
-func loadFile(fileExtension string) []byte {
+func storeFile(datasetId string, filePath string, fileName string) {
+	if err := repository.StoreRawFile(datasetId, filePath, fileName); err != nil {
+		log.Printf("Error uploading file to MinIO: %v\n", err)
+		return
+	}
+	fmt.Println("Successfully stored raw file")
+}
+
+func loadFile(fileExtension string) ([]byte, string) {
 	var path string
 	switch fileExtension {
 	case "csv":
@@ -97,13 +107,13 @@ func loadFile(fileExtension string) []byte {
 		path = "./sample_data.json"
 	default:
 		fmt.Println("The provided file extension is invalid. Please choose csv or json.")
-		return nil
+		return nil, ""
 	}
 
 	file, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Printf("Error reading %v file: %v\n", fileExtension, err)
-		return nil
+		return nil, ""
 	}
-	return file
+	return file, path
 }
