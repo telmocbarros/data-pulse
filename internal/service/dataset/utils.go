@@ -6,6 +6,8 @@ import (
 	"log"
 	"strconv"
 	"time"
+
+	"github.com/telmocbarros/data-pulse/internal/columntype"
 )
 
 type ValidationError struct {
@@ -17,12 +19,6 @@ type ValidationError struct {
 	Detail   string
 }
 
-const (
-	IS_NUMERICAL = "IS_NUMERICAL"
-	IS_BOOLEAN   = "IS_BOOLEAN"
-	IS_DATE      = "IS_DATE"
-	IS_TEXT      = "IS_TEXT"
-)
 
 func ReadCsvRowAndExtractType(csvReader *csv.Reader) ([]string, []string, error) {
 	content, err := csvReader.Read()
@@ -88,13 +84,13 @@ func ParseValue(value string) any {
 func ComputeVariableType(value string) (valueType string, err error) {
 	// is empty
 	if len(value) == 0 {
-		return IS_TEXT, nil
+		return columntype.IS_TEXT, nil
 	}
 
 	// is numerical
 	_, err = strconv.ParseFloat(value, 64)
 	if err == nil {
-		return IS_NUMERICAL, nil
+		return columntype.IS_NUMERICAL, nil
 	}
 
 	// is boolean
@@ -102,27 +98,27 @@ func ComputeVariableType(value string) (valueType string, err error) {
 	// "1" and "0" are valid booleans in Go's strconv.ParseBool
 	_, err = strconv.ParseBool(value)
 	if err == nil {
-		return IS_BOOLEAN, nil
+		return columntype.IS_BOOLEAN, nil
 	}
 
 	// is date
 	_, err = time.Parse("2006-01-02 15:04:05", value)
 	if err == nil {
-		return IS_DATE, nil
+		return columntype.IS_DATE, nil
 	}
 	_, err = time.Parse("2006-01-02", value)
 	if err == nil {
-		return IS_DATE, nil
+		return columntype.IS_DATE, nil
 	}
 	// time.Time printed via fmt.Sprintf("%v") produces this format
 	_, err = time.Parse("2006-01-02 15:04:05 -0700 MST", value)
 	if err == nil {
-		return IS_DATE, nil
+		return columntype.IS_DATE, nil
 	}
 	_, err = time.Parse("2006-01-02 15:04:05 +0000 UTC", value)
 	if err == nil {
-		return IS_DATE, nil
+		return columntype.IS_DATE, nil
 	}
 
-	return IS_TEXT, nil
+	return columntype.IS_TEXT, nil
 }

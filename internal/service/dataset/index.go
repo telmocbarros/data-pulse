@@ -2,6 +2,8 @@ package dataset
 
 import (
 	"time"
+
+	"github.com/telmocbarros/data-pulse/internal/columntype"
 )
 
 func extractColumns(row map[string]any) [][]string {
@@ -15,12 +17,12 @@ func extractColumns(row map[string]any) [][]string {
 func goTypeToDBType(val any) string {
 	switch val.(type) {
 	case time.Time:
-		return IS_DATE
+		return columntype.IS_DATE
 	case float64, float32, int, int8, int16, int32, int64:
-		return IS_NUMERICAL
+		return columntype.IS_NUMERICAL
 	case bool:
-		return IS_BOOLEAN
+		return columntype.IS_BOOLEAN
 	default:
-		return IS_TEXT
+		return columntype.IS_TEXT
 	}
 }
