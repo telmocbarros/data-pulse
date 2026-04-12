@@ -8,7 +8,33 @@ import (
 
 	"github.com/telmocbarros/data-pulse/internal/columntype"
 	"github.com/telmocbarros/data-pulse/internal/models"
+	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	profilerRepo "github.com/telmocbarros/data-pulse/internal/repository/profiler"
 )
+
+// ProfileAndStore reads a dataset from the DB, profiles it, and stores the results.
+func ProfileAndStore(datasetId string, tableName string, columnTypes map[string]string) error {
+	rows, err := repository.GetDatasetRows(tableName)
+	if err != nil {
+		return fmt.Errorf("error reading dataset rows: %w", err)
+	}
+
+	rowCh := make(chan map[string]any, 100)
+	go func() {
+		defer close(rowCh)
+		for _, row := range rows {
+			rowCh <- row
+		}
+	}()
+
+	result := ProfileDataset(rowCh, columnTypes)
+
+	if err := profilerRepo.StoreProfile(datasetId, result); err != nil {
+		return fmt.Errorf("error storing profile: %w", err)
+	}
+
+	return nil
+}
 
 // columnValue carries a single value destined for a column's profiler goroutine.
 type columnValue struct {
