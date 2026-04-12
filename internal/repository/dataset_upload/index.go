@@ -121,6 +121,70 @@ func StoreDatasetColumns(columns [][]string, datasetId string) error {
 	return nil
 }
 
+// GetDatasetById returns the table_name and column types for a dataset.
+func GetDatasetById(id string) (tableName string, columnTypes map[string]string, err error) {
+	err = config.Storage.QueryRow(
+		`SELECT table_name FROM datasets WHERE id = $1`, id,
+	).Scan(&tableName)
+	if err != nil {
+		return "", nil, fmt.Errorf("dataset not found: %w", err)
+	}
+
+	rows, err := config.Storage.Query(
+		`SELECT column_name, column_type FROM dataset_columns WHERE dataset_id = $1`, id,
+	)
+	if err != nil {
+		return "", nil, err
+	}
+	defer rows.Close()
+
+	columnTypes = make(map[string]string)
+	for rows.Next() {
+		var name, colType string
+		if err := rows.Scan(&name, &colType); err != nil {
+			return "", nil, err
+		}
+		columnTypes[name] = colType
+	}
+
+	return tableName, columnTypes, nil
+}
+
+// GetDatasetRows reads all rows from a dataset's dynamic table.
+func GetDatasetRows(tableName string) ([]map[string]any, error) {
+	rows, err := config.Storage.Query(fmt.Sprintf("SELECT * FROM %s", tableName))
+	if err != nil {
+		return nil, fmt.Errorf("unable to query dataset table: %w", err)
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []map[string]any
+	for rows.Next() {
+		values := make([]any, len(columns))
+		valuePtrs := make([]any, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, err
+		}
+
+		row := make(map[string]any, len(columns))
+		for i, col := range columns {
+			row[col] = values[i]
+		}
+		result = append(result, row)
+	}
+
+	return result, nil
+}
+
 func mapToDatabase(value string) string {
 	switch value {
 	case "IS_NUMERICAL":

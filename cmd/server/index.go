@@ -20,7 +20,32 @@ func main() {
 	jobmanager.Init(4)
 
 	http.HandleFunc("/health", health)
-	http.HandleFunc("/dataset", handler.FileUploadHandler)
+
+	http.HandleFunc("/api/datasets/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/datasets/")
+
+		// POST /api/datasets/ — upload a new dataset
+		if path == "" && r.Method == http.MethodPost {
+			handler.FileUploadHandler(w, r)
+			return
+		}
+
+		// /api/datasets/{id}/profile
+		if strings.HasSuffix(path, "/profile") {
+			switch r.Method {
+			case http.MethodGet:
+				handler.GetProfileHandler(w, r)
+			case http.MethodPost:
+				handler.CreateProfileHandler(w, r)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+			return
+		}
+
+		http.Error(w, "Not found", http.StatusNotFound)
+	})
+
 	http.HandleFunc("/api/jobs/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/cancel") && r.Method == http.MethodPost {
 			handler.CancelJobHandler(w, r)

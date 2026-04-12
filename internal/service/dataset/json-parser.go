@@ -9,6 +9,7 @@ import (
 
 	"github.com/telmocbarros/data-pulse/config"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	profilerRepo "github.com/telmocbarros/data-pulse/internal/repository/profiler"
 	"github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
 
@@ -172,7 +173,10 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 	})
 
 	wg.Go(func() {
-		profiler.ProfileDataset(profilerCh, state.columnTypes)
+		result := profiler.ProfileDataset(profilerCh, state.columnTypes)
+		if err := profilerRepo.StoreProfile(state.datasetId, result); err != nil {
+			fmt.Println("Error storing profile:", err)
+		}
 	})
 
 	// Stage 3: Store — batches rows from dataCh and writes to DB

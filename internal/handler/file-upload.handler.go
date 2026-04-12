@@ -13,6 +13,8 @@ import (
 )
 
 func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
+
+	
 	err := r.ParseMultipartForm(10 << 20)
 	if err != nil {
 		fmt.Println("Error retrieving multipart form")
