@@ -26,7 +26,7 @@ func main() {
 			fmt.Println("Process CSV file ...")
 			data := loadFile("csv")
 			if data != nil {
-				err := service.ProcessCsvFile(context.Background(), bytes.NewReader(data), "sample_data.csv", int64(len(data)), noopProgress)
+				_, err := service.ProcessCsvFile(context.Background(), bytes.NewReader(data), "sample_data.csv", int64(len(data)), noopProgress)
 				if err != nil {
 					log.Printf("CSV processing error: %v\n", err)
 				} else {
@@ -38,7 +38,7 @@ func main() {
 			fmt.Println("Process Json file ...")
 			data := loadFile("json")
 			if data != nil {
-				err := service.ProcessJsonFile(context.Background(), bytes.NewReader(data), "sample_data.json", int64(len(data)), noopProgress)
+				_, err := service.ProcessJsonFile(context.Background(), bytes.NewReader(data), "sample_data.json", int64(len(data)), noopProgress)
 				if err != nil {
 					log.Printf("JSON processing error: %v\n", err)
 				} else {

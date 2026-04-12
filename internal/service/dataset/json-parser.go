@@ -30,13 +30,13 @@ type jsonPipelineState struct {
 
 // ProcessJsonFile runs the full JSON pipeline synchronously.
 // It is meant to be called from within a job goroutine.
-func ProcessJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize int64, progressFn func(int)) error {
+func ProcessJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize int64, progressFn func(int)) (string, error) {
 	state, err := parseJsonFile(ctx, f, fileName, fileSize)
 	if err != nil {
-		return err
+		return "", err
 	}
 	progressFn(10)
-	return runJsonPipeline(ctx, state, progressFn)
+	return state.datasetId, runJsonPipeline(ctx, state, progressFn)
 }
 
 // parseJsonFile reads the file, creates metadata, and runs Stage 1 (parsing).

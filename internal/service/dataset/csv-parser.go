@@ -31,13 +31,13 @@ type csvPipelineState struct {
 
 // ProcessCsvFile runs the full CSV pipeline synchronously.
 // It is meant to be called from within a job goroutine.
-func ProcessCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize int64, progressFn func(int)) error {
+func ProcessCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize int64, progressFn func(int)) (string, error) {
 	state, err := parseCsvFile(ctx, f, fileName, fileSize)
 	if err != nil {
-		return err
+		return "", err
 	}
 	progressFn(10)
-	return runCsvPipeline(ctx, state, progressFn)
+	return state.datasetId, runCsvPipeline(ctx, state, progressFn)
 }
 
 // parseCsvFile reads the file, creates metadata, and runs Stage 1 (parsing).
