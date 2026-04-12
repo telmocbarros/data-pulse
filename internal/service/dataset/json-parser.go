@@ -150,15 +150,36 @@ func runJsonPipeline(state *jsonPipelineState) []ValidationError {
 	var validationErrors []ValidationError
 
 	dataCh := make(chan map[string]any, 100)
+	profilerCh := make(chan map[string]any, 100)
 
 	// Send first row straight to dataCh (already validated during setup)
 	dataCh <- state.firstRow
+	profilerCh <- state.firstRow
+
+	var wg sync.WaitGroup
+
+	// Error collector — drains errorsCh into the returned validationErrors slice
+	wg.Go(func() {
+		for ve := range state.errorsCh {
+			validationErrors = append(validationErrors, ve)
+		}
+	})
+
+	wg.Go(func() {
+		profiler.ProfileDataset(profilerCh, state.datasetId, state.columnTypes)
+	})
+
+	// Stage 3: Store — batches rows from dataCh and writes to DB
+	wg.Go(func() {
+		uploadJsonDataset(dataCh, state.tableName, state.datasetId)
+	})
 
 	var errWg sync.WaitGroup
 
 	// Stage 2: Validate — check types and missing columns, forward valid rows to dataCh
 	errWg.Go(func() {
 		defer close(dataCh)
+		defer close(profilerCh)
 
 		for nr := range state.parserCh {
 			for _, k := range state.columnKeys {
@@ -189,7 +210,7 @@ func runJsonPipeline(state *jsonPipelineState) []ValidationError {
 				}
 			}
 			dataCh <- nr.Data
-			profiler.ProfileDataset(dataCh, state.datasetId, state.columnTypes)
+			profilerCh <- nr.Data
 		}
 	})
 
@@ -198,20 +219,6 @@ func runJsonPipeline(state *jsonPipelineState) []ValidationError {
 		errWg.Wait()
 		close(state.errorsCh)
 	}()
-
-	var wg sync.WaitGroup
-
-	// Error collector — drains errorsCh into the returned validationErrors slice
-	wg.Go(func() {
-		for ve := range state.errorsCh {
-			validationErrors = append(validationErrors, ve)
-		}
-	})
-
-	// Stage 3: Store — batches rows from dataCh and writes to DB
-	wg.Go(func() {
-		uploadJsonDataset(dataCh, state.tableName, state.datasetId)
-	})
 
 	wg.Wait()
 

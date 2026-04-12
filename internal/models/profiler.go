@@ -10,12 +10,15 @@ type NumericProfiler struct {
 	ColumnName       string
 	Min              float64
 	Max              float64
+	Sum              float64 // running sum for mean calculation
+	Count            int64   // total non-null values
 	Mean             float64
 	Median           float64
 	Stdv             float64
 	P25              float64
 	P50              float64
 	P75              float64
+	Values           []float64 // collected values for median, percentiles, stddev
 	NullCount        int64
 	NullPercent      float64
 	Histogram        []HistogramBucket
