@@ -8,7 +8,7 @@ import (
 	"github.com/telmocbarros/data-pulse/config"
 )
 
-func StoreDataset(tableName string, datasetId string, rows []map[string]any) error {
+func StoreDataset(dbExecutor config.Executor, tableName string, datasetId string, rows []map[string]any) error {
 	if tableName == "" {
 		tableName = "json_datasets"
 	}
@@ -52,7 +52,7 @@ func StoreDataset(tableName string, datasetId string, rows []map[string]any) err
 	}
 	query = query[:len(query)-1] // trim trailing comma
 
-	result, err := config.Storage.Exec(query, vals...)
+	result, err := dbExecutor.Exec(query, vals...)
 	if err != nil {
 		fmt.Println("unable to execute insert query", err)
 		return err

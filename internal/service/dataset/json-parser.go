@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"sync"
 
+	"github.com/telmocbarros/data-pulse/config"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 	"github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
@@ -228,13 +229,20 @@ func runJsonPipeline(state *jsonPipelineState) []ValidationError {
 func uploadJsonDataset(dataCh chan map[string]any, tableName string, datasetId string) {
 	fmt.Println("Processing dataset ...")
 
+	tx, err := config.Storage.Begin()
+	if err != nil {
+		fmt.Println("Could not begin transaction:", err)
+		return
+	}
+	defer tx.Rollback()
+
 	batchSize := 50
 	batch := make([]map[string]any, 0, batchSize)
 
 	for row := range dataCh {
 		batch = append(batch, row)
 		if len(batch) >= batchSize {
-			if err := repository.StoreDataset(tableName, datasetId, batch); err != nil {
+			if err := repository.StoreDataset(tx, tableName, datasetId, batch); err != nil {
 				fmt.Println("Could not persist the dataset")
 				return
 			}
@@ -244,8 +252,13 @@ func uploadJsonDataset(dataCh chan map[string]any, tableName string, datasetId s
 
 	// flush remaining rows
 	if len(batch) > 0 {
-		if err := repository.StoreDataset(tableName, datasetId, batch); err != nil {
+		if err := repository.StoreDataset(tx, tableName, datasetId, batch); err != nil {
 			fmt.Println("Could not persist the dataset")
+			return
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		fmt.Println("Could not commit transaction:", err)
 	}
 }

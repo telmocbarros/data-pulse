@@ -10,6 +10,12 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Executor is satisfied by both *sql.DB and *sql.Tx.
+type Executor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 var Storage *sql.DB
 
 func SetupDatabase() error {
