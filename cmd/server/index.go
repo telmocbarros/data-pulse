@@ -17,6 +17,10 @@ func main() {
 	}
 	defer config.Storage.Close()
 
+	if err := config.SetupFileStorage(); err != nil {
+		log.Fatal("Error setting up file storage. Shutting down the server!")
+	}
+
 	jobmanager.Init(4)
 
 	http.HandleFunc("/health", health)
