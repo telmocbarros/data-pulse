@@ -39,11 +39,11 @@ type CategoryProfiler struct {
 	UniquenessRatio    Ratio
 	NullCount          int64
 	NullPercent        float64
-	MostFrequentValues []Occurrence
+	MostFrequentValues map[string]*Occurrence
 	TypeDistribution   map[string]float64
 }
 
 type DatasetProfiler struct {
-	Category CategoryProfiler
-	Numeric  NumericProfiler
+	Category map[string]*CategoryProfiler
+	Numeric  map[string]*NumericProfiler
 }

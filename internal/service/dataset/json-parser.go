@@ -189,7 +189,7 @@ func runJsonPipeline(state *jsonPipelineState) []ValidationError {
 				}
 			}
 			dataCh <- nr.Data
-			profiler.ProfileDataset(nr.Data)
+			profiler.ProfileDataset(dataCh, state.datasetId, state.columnTypes)
 		}
 	})
 
