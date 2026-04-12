@@ -1,13 +1,13 @@
-package service
+package dataset
 
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"mime/multipart"
 	"sync"
 
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	"github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
 
 type numberedJsonRow struct {
@@ -81,8 +81,6 @@ func parseJsonFile(f multipart.File, fileName string, fileSize int64) (*jsonPipe
 		}
 		columnTypes[k] = varType
 	}
-	log.Println("Column keys: ", columnKeys)
-	log.Println("Column types: ", columnTypes)
 
 	datasetColumns := extractColumns(firstRow)
 
@@ -191,6 +189,7 @@ func runJsonPipeline(state *jsonPipelineState) []ValidationError {
 				}
 			}
 			dataCh <- nr.Data
+			profiler.ProfileDataset(nr.Data)
 		}
 	})
 

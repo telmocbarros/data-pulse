@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
-	service "github.com/telmocbarros/data-pulse/internal/service/dataset_upload"
+	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
 )
 
 func FileUploadHandler(w http.ResponseWriter, r *http.Request) {

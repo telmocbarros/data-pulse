@@ -1,4 +1,4 @@
-package service
+package dataset
 
 import (
 	"encoding/csv"

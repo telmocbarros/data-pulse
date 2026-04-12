@@ -7,7 +7,7 @@ import (
 	"os"
 
 	storage "github.com/telmocbarros/data-pulse/config"
-	service "github.com/telmocbarros/data-pulse/internal/service/dataset_upload"
+	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
 )
 
 /*

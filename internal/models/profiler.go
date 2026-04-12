@@ -42,3 +42,8 @@ type CategoryProfiler struct {
 	MostFrequentValues []Occurrence
 	TypeDistribution   map[string]float64
 }
+
+type DatasetProfiler struct {
+	Category CategoryProfiler
+	Numeric  NumericProfiler
+}
