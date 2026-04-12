@@ -13,12 +13,12 @@ import (
 
 func main() {
 	if err := config.SetupDatabase(); err != nil {
-		log.Fatal("Error setting up the database. Shutting down the server!")
+		log.Fatalf("Error setting up the database: %v", err)
 	}
 	defer config.Storage.Close()
 
 	if err := config.SetupFileStorage(); err != nil {
-		log.Fatal("Error setting up file storage. Shutting down the server!")
+		log.Fatalf("Error setting up file storage: %v", err)
 	}
 
 	jobmanager.Init(4)
