@@ -124,6 +124,38 @@ func StoreDatasetColumns(columns [][]string, datasetId string) error {
 	return nil
 }
 
+// ListDatasets returns metadata for all datasets.
+func ListDatasets() ([]map[string]any, error) {
+	rows, err := config.Storage.Query(
+		`SELECT id, file_name, table_name, size, uploaded_by, description, created_at
+		 FROM datasets ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var datasets []map[string]any
+	for rows.Next() {
+		var id, fileName, tableName, uploadedBy, description string
+		var size int64
+		var createdAt any
+		if err := rows.Scan(&id, &fileName, &tableName, &size, &uploadedBy, &description, &createdAt); err != nil {
+			return nil, err
+		}
+		datasets = append(datasets, map[string]any{
+			"id":          id,
+			"file_name":   fileName,
+			"table_name":  tableName,
+			"size":        size,
+			"uploaded_by": uploadedBy,
+			"description": description,
+			"created_at":  createdAt,
+		})
+	}
+	return datasets, nil
+}
+
 // GetDatasetById returns the table_name and column types for a dataset.
 func GetDatasetById(id string) (tableName string, columnTypes map[string]string, err error) {
 	err = config.Storage.QueryRow(
