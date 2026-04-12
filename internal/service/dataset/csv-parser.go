@@ -114,23 +114,31 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 				if err == io.EOF {
 					break
 				}
-				errorsCh <- ValidationError{
+				select {
+				case errorsCh <- ValidationError{
 					Row:    rowNumber,
 					Column: -1,
 					Kind:   "malformed_row",
 					Detail: err.Error(),
+				}:
+				case <-ctx.Done():
+					return
 				}
 				rowNumber++
 				continue
 			}
 
 			if len(record) != expectedColumns {
-				errorsCh <- ValidationError{
+				select {
+				case errorsCh <- ValidationError{
 					Row:      rowNumber,
 					Column:   -1,
 					Kind:     "malformed_row",
 					Expected: fmt.Sprintf("%d columns", expectedColumns),
 					Received: fmt.Sprintf("%d columns", len(record)),
+				}:
+				case <-ctx.Done():
+					return
 				}
 			}
 
@@ -192,10 +200,14 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 			for idx, value := range nr.Record {
 
 				if value == "" {
-					state.errorsCh <- ValidationError{
+					select {
+					case state.errorsCh <- ValidationError{
 						Row:    nr.Row,
 						Column: int32(idx),
 						Kind:   "missing_value",
+					}:
+					case <-ctx.Done():
+						return
 					}
 					continue
 				}
@@ -207,12 +219,16 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 						return
 					}
 					if state.rowFieldTypes[idx] != variableType {
-						state.errorsCh <- ValidationError{
+						select {
+						case state.errorsCh <- ValidationError{
 							Row:      nr.Row,
 							Column:   int32(idx),
 							Kind:     "type_mismatch",
 							Expected: state.rowFieldTypes[idx],
 							Received: variableType,
+						}:
+						case <-ctx.Done():
+							return
 						}
 					}
 				}
