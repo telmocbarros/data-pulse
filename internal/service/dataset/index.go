@@ -23,6 +23,6 @@ func goTypeToDBType(val any) string {
 	case bool:
 		return columntype.IS_BOOLEAN
 	default:
-		return columntype.IS_TEXT
+		return columntype.IS_CATEGORICAL
 	}
 }

@@ -84,7 +84,7 @@ func ParseValue(value string) any {
 func ComputeVariableType(value string) (valueType string, err error) {
 	// is empty
 	if len(value) == 0 {
-		return columntype.IS_TEXT, nil
+		return columntype.IS_CATEGORICAL, nil
 	}
 
 	// is numerical
@@ -120,5 +120,5 @@ func ComputeVariableType(value string) (valueType string, err error) {
 		return columntype.IS_DATE, nil
 	}
 
-	return columntype.IS_TEXT, nil
+	return columntype.IS_CATEGORICAL, nil
 }

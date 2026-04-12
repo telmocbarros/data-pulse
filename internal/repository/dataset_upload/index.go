@@ -225,7 +225,7 @@ func mapToDatabase(value string) string {
 		return "BOOLEAN"
 	case "IS_DATE":
 		return "TIMESTAMP"
-	case "IS_TEXT":
+	case "IS_CATEGORICAL":
 		return "TEXT"
 	default:
 		return "TEXT"
