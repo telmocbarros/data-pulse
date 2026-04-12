@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,7 +9,9 @@ import (
 
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 	profilerRepo "github.com/telmocbarros/data-pulse/internal/repository/profiler"
-	"github.com/telmocbarros/data-pulse/internal/service/profiler"
+	jobRepo "github.com/telmocbarros/data-pulse/internal/repository/job"
+	"github.com/telmocbarros/data-pulse/internal/service/jobmanager"
+	profilerService "github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
 
 // GetProfileHandler returns the stored profiling results for a dataset.
@@ -30,8 +33,7 @@ func GetProfileHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(profile)
 }
 
-// CreateProfileHandler re-profiles an existing dataset by reading rows
-// from the database and running the profiler.
+// CreateProfileHandler submits a profiling job for an existing dataset.
 // POST /api/datasets/{id}/profile
 func CreateProfileHandler(w http.ResponseWriter, r *http.Request) {
 	id := extractDatasetId(r.URL.Path)
@@ -46,33 +48,20 @@ func CreateProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := repository.GetDatasetRows(tableName)
+	jobID, err := jobRepo.CreateJob(id, "profile")
 	if err != nil {
-		fmt.Println("Error reading dataset rows:", err)
-		http.Error(w, "Error reading dataset", http.StatusInternalServerError)
+		fmt.Println("Error creating profiling job:", err)
+		http.Error(w, "Error creating profiling job", http.StatusInternalServerError)
 		return
 	}
 
-	// Feed rows into a channel for the profiler
-	rowCh := make(chan map[string]any, 100)
-	go func() {
-		defer close(rowCh)
-		for _, row := range rows {
-			rowCh <- row
-		}
-	}()
-
-	result := profiler.ProfileDataset(rowCh, columnTypes)
-
-	if err := profilerRepo.StoreProfile(id, result); err != nil {
-		fmt.Println("Error storing profile:", err)
-		http.Error(w, "Error storing profile", http.StatusInternalServerError)
-		return
-	}
+	jobmanager.Default.Submit(jobID, func(ctx context.Context, progressFn func(int)) error {
+		return profilerService.ProfileAndStore(id, tableName, columnTypes)
+	})
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(result)
+	w.WriteHeader(http.StatusAccepted)
+	fmt.Fprintf(w, `{"job_id": "%s"}`, jobID)
 }
 
 // extractDatasetId extracts the dataset ID from paths like /api/datasets/{id}/profile

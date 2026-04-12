@@ -11,6 +11,7 @@ import (
 	jobRepo "github.com/telmocbarros/data-pulse/internal/repository/job"
 	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
 	"github.com/telmocbarros/data-pulse/internal/service/jobmanager"
+	profilerService "github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
 
 func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +96,20 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 		if err := repository.StoreRawFile(datasetId, tmpPath, fileName); err != nil {
 			fmt.Println("Error uploading file to MinIO:", err)
 		}
+
+		// Submit profiling as a separate background job
+		profilingJobID, err := jobRepo.CreateJob(fileName, fileType+"-profile")
+		if err != nil {
+			fmt.Println("Error creating profiling job:", err)
+			return nil
+		}
+		jobmanager.Default.Submit(profilingJobID, func(ctx context.Context, progressFn func(int)) error {
+			tableName, columnTypes, err := repository.GetDatasetById(datasetId)
+			if err != nil {
+				return err
+			}
+			return profilerService.ProfileAndStore(datasetId, tableName, columnTypes)
+		})
 
 		return nil
 	})
