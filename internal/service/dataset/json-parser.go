@@ -120,11 +120,15 @@ func parseJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize i
 
 			var row map[string]any
 			if err := decoder.Decode(&row); err != nil {
-				errorsCh <- ValidationError{
+				select {
+				case errorsCh <- ValidationError{
 					Row:    rowNumber,
 					Column: -1,
 					Kind:   "malformed_row",
 					Detail: err.Error(),
+				}:
+				case <-ctx.Done():
+					return
 				}
 				rowNumber++
 				continue
@@ -195,11 +199,15 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 			for _, k := range state.columnKeys {
 				v, exists := nr.Data[k]
 				if !exists {
-					state.errorsCh <- ValidationError{
+					select {
+					case state.errorsCh <- ValidationError{
 						Row:    nr.Row,
 						Column: -1,
 						Kind:   "missing_value",
 						Detail: fmt.Sprintf("missing column %q", k),
+					}:
+					case <-ctx.Done():
+						return
 					}
 					continue
 				}
@@ -209,13 +217,17 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 					return
 				}
 				if varType != state.columnTypes[k] {
-					state.errorsCh <- ValidationError{
+					select {
+					case state.errorsCh <- ValidationError{
 						Row:      nr.Row,
 						Column:   -1,
 						Kind:     "type_mismatch",
 						Expected: state.columnTypes[k],
 						Received: varType,
 						Detail:   fmt.Sprintf("column %q", k),
+					}:
+					case <-ctx.Done():
+						return
 					}
 				}
 			}
