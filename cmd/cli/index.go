@@ -7,12 +7,21 @@ import (
 	"log"
 	"os"
 
-	storage "github.com/telmocbarros/data-pulse/config"
+	"github.com/telmocbarros/data-pulse/config"
+	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
+	profilerService "github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
 
 func main() {
-	storage.SetupDatabase()
+	if err := config.SetupDatabase(); err != nil {
+		log.Fatalf("Error setting up the database: %v", err)
+	}
+	defer config.Storage.Close()
+
+	if err := config.SetupFileStorage(); err != nil {
+		log.Fatalf("Error setting up file storage: %v", err)
+	}
 	var userInput string
 
 	noopProgress := func(int) {}
@@ -26,11 +35,12 @@ func main() {
 			fmt.Println("Process CSV file ...")
 			data := loadFile("csv")
 			if data != nil {
-				_, err := service.ProcessCsvFile(context.Background(), bytes.NewReader(data), "sample_data.csv", int64(len(data)), noopProgress)
+				datasetId, err := service.ProcessCsvFile(context.Background(), bytes.NewReader(data), "sample_data.csv", int64(len(data)), noopProgress)
 				if err != nil {
 					log.Printf("CSV processing error: %v\n", err)
 				} else {
 					fmt.Println("Successfully parsed CSV file")
+					runProfiler(datasetId)
 				}
 			}
 
@@ -38,11 +48,12 @@ func main() {
 			fmt.Println("Process Json file ...")
 			data := loadFile("json")
 			if data != nil {
-				_, err := service.ProcessJsonFile(context.Background(), bytes.NewReader(data), "sample_data.json", int64(len(data)), noopProgress)
+				datasetId, err := service.ProcessJsonFile(context.Background(), bytes.NewReader(data), "sample_data.json", int64(len(data)), noopProgress)
 				if err != nil {
 					log.Printf("JSON processing error: %v\n", err)
 				} else {
 					fmt.Println("Successfully parsed JSON file")
+					runProfiler(datasetId)
 				}
 			}
 		case "q":
@@ -62,6 +73,19 @@ func displayMenu() {
 	println("1. Process CSV File")
 	println("2. Process Json File")
 	println("q. exit")
+}
+
+func runProfiler(datasetId string) {
+	tableName, columnTypes, err := repository.GetDatasetById(datasetId)
+	if err != nil {
+		log.Printf("Error fetching dataset for profiling: %v\n", err)
+		return
+	}
+	if err := profilerService.ProfileAndStore(datasetId, tableName, columnTypes); err != nil {
+		log.Printf("Error profiling dataset: %v\n", err)
+		return
+	}
+	fmt.Println("Successfully profiled dataset")
 }
 
 func loadFile(fileExtension string) []byte {

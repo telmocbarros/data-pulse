@@ -174,7 +174,7 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 		}
 	})
 
-	// Stage 3: Store — batches rows from dataCh and writes to DB
+	// Stage: Store — batches rows from dataCh and writes to DB
 	wg.Go(func() {
 		uploadJsonDataset(ctx, dataCh, state.tableName, state.datasetId, progressFn)
 	})
@@ -183,7 +183,7 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 	// close it safely after both the parser and validator finish.
 	var errWg sync.WaitGroup
 
-	// Stage 2: Validate — check types and missing values, forward valid rows to dataCh
+	// Stage: Validate — check types and missing values, forward valid rows to dataCh
 	errWg.Go(func() {
 		defer close(dataCh)
 
