@@ -172,7 +172,7 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 	})
 
 	wg.Go(func() {
-		profiler.ProfileDataset(profilerCh, state.datasetId, state.columnTypes)
+		profiler.ProfileDataset(profilerCh, state.columnTypes)
 	})
 
 	// Stage 3: Store — batches rows from dataCh and writes to DB

@@ -4,67 +4,108 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync"
 
 	"github.com/telmocbarros/data-pulse/internal/columntype"
 	"github.com/telmocbarros/data-pulse/internal/models"
 )
 
-var profilers = make(map[string]models.DatasetProfiler)
+// columnValue carries a single value destined for a column's profiler goroutine.
+type columnValue struct {
+	val any
+}
 
-func ProfileDataset(rowCh chan map[string]any, datasetId string, columns map[string]string) (*models.DatasetProfiler, error) {
-	profiler, exists := profilers[datasetId]
-	if !exists {
-		profiler = createProfiler(columns)
-		profilers[datasetId] = profiler
+// ProfileDataset profiles a dataset concurrently across columns.
+// Each column gets its own goroutine that processes values in parallel.
+func ProfileDataset(rowCh chan map[string]any, columns map[string]string) *models.DatasetProfiler {
+	profiler := createProfiler(columns)
+
+	// Create a channel per column
+	colChannels := make(map[string]chan columnValue, len(columns))
+	for colName := range columns {
+		colChannels[colName] = make(chan columnValue, 100)
 	}
 
+	var wg sync.WaitGroup
 	var totalRows int64
-	for row := range rowCh {
-		totalRows++
-		for colName, colType := range columns {
-			val, exists := row[colName]
-			if !exists || val == nil {
-				if colType == columntype.IS_NUMERICAL {
-					profiler.Numeric[colName].NullCount++
-				} else {
-					profiler.Category[colName].NullCount++
-				}
-				continue
-			}
+	var rowCountOnce sync.Once
 
-			if colType == columntype.IS_NUMERICAL {
-				n := profiler.Numeric[colName]
-				num, ok := toFloat64(val)
-				if !ok {
-					n.TypeDistribution["non_numeric"]++
-					continue
+	// Launch a goroutine per column
+	for colName, colType := range columns {
+		colCh := colChannels[colName]
+
+		if colType == columntype.IS_NUMERICAL {
+			n := profiler.Numeric[colName]
+			wg.Go(func() {
+				var localRows int64
+				for cv := range colCh {
+					localRows++
+					if cv.val == nil {
+						n.NullCount++
+						continue
+					}
+					num, ok := toFloat64(cv.val)
+					if !ok {
+						n.TypeDistribution["non_numeric"]++
+						continue
+					}
+					n.TypeDistribution["numeric"]++
+					n.Count++
+					n.Sum += num
+					n.Values = append(n.Values, num)
+					if num > n.Max {
+						n.Max = num
+					}
+					if num < n.Min {
+						n.Min = num
+					}
 				}
-				n.TypeDistribution["numeric"]++
-				n.Count++
-				n.Sum += num
-				n.Values = append(n.Values, num)
-				if num > n.Max {
-					n.Max = num
+				rowCountOnce.Do(func() { totalRows = localRows })
+			})
+		} else {
+			c := profiler.Category[colName]
+			wg.Go(func() {
+				var localRows int64
+				for cv := range colCh {
+					localRows++
+					if cv.val == nil {
+						c.NullCount++
+						continue
+					}
+					str := fmt.Sprintf("%v", cv.val)
+					if occ, exists := c.MostFrequentValues[str]; exists {
+						occ.Count++
+					} else {
+						c.MostFrequentValues[str] = &models.Occurrence{Value: str, Count: 1}
+					}
+					c.TypeDistribution[colType]++
 				}
-				if num < n.Min {
-					n.Min = num
-				}
+				rowCountOnce.Do(func() { totalRows = localRows })
+			})
+		}
+	}
+
+	// Fan out: distribute each row's values to the per-column channels
+	for row := range rowCh {
+		for colName := range columns {
+			val, exists := row[colName]
+			if !exists {
+				colChannels[colName] <- columnValue{val: nil}
 			} else {
-				c := profiler.Category[colName]
-				str := fmt.Sprintf("%v", val)
-				if occ, exists := c.MostFrequentValues[str]; exists {
-					occ.Count++
-				} else {
-					c.MostFrequentValues[str] = &models.Occurrence{Value: str, Count: 1}
-				}
-				c.TypeDistribution[colType]++
+				colChannels[colName] <- columnValue{val: val}
 			}
 		}
 	}
 
+	// Close all column channels so column goroutines finish
+	for _, ch := range colChannels {
+		close(ch)
+	}
+
+	wg.Wait()
+
 	finalise(&profiler, totalRows)
-	profilers[datasetId] = profiler
-	return &profiler, nil
+	return &profiler
 }
 
 func createProfiler(columns map[string]string) models.DatasetProfiler {
@@ -81,12 +122,10 @@ func createProfiler(columns map[string]string) models.DatasetProfiler {
 		}
 	}
 
-	datasetProfiler := models.DatasetProfiler{
+	return models.DatasetProfiler{
 		Numeric:  numericProfilers,
 		Category: categoryProfilers,
 	}
-
-	return datasetProfiler
 }
 
 func initialiseNumericProfiler(name string) models.NumericProfiler {
@@ -99,16 +138,11 @@ func initialiseNumericProfiler(name string) models.NumericProfiler {
 		TypeDistribution: make(map[string]float64),
 	}
 }
-func initialiseCategoryProfiler(name string) models.CategoryProfiler {
-	categoryRatio := models.Ratio{
-		Value:        0,
-		UniqueValues: 0,
-		TotalRows:    0,
-	}
 
+func initialiseCategoryProfiler(name string) models.CategoryProfiler {
 	return models.CategoryProfiler{
 		ColumnName:         name,
-		UniquenessRatio:    categoryRatio,
+		UniquenessRatio:    models.Ratio{},
 		MostFrequentValues: make(map[string]*models.Occurrence),
 		TypeDistribution:   make(map[string]float64),
 	}
