@@ -2,8 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
+	"github.com/google/uuid"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 )
 
@@ -22,4 +24,17 @@ func ListDatasetsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(datasets)
+}
+
+// GetDatasetHandler returns metadata for a specific dataset.
+// GET /api/datasets/:id/
+func GetDatasetHandler(w http.ResponseWriter, r *http.Request) {
+	datasetId, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		log.Println("Error parsing the dataset Id: ", err)
+		http.Error(w, "Invalid parameter", http.StatusBadRequest)
+	}
+
+	log.Printf("Dataset id %v", datasetId)
+	w.Write([]byte(datasetId.String()))
 }

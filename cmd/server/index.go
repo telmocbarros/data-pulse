@@ -56,6 +56,16 @@ func main() {
 		http.Error(w, "Not found", http.StatusNotFound)
 	})
 
+	http.HandleFunc("/api/datasets/{id}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			handler.GetDatasetHandler(w, r)
+			return
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	http.HandleFunc("/api/jobs/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/cancel") && r.Method == http.MethodPost {
 			handler.CancelJobHandler(w, r)
