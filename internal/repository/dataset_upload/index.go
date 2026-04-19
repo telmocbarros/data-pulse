@@ -156,35 +156,6 @@ func ListDatasets() ([]map[string]any, error) {
 	return datasets, nil
 }
 
-// GetDatasetById returns the table_name and column types for a dataset.
-func GetDatasetById(id string) (tableName string, columnTypes map[string]string, err error) {
-	err = config.Storage.QueryRow(
-		`SELECT table_name FROM datasets WHERE id = $1`, id,
-	).Scan(&tableName)
-	if err != nil {
-		return "", nil, fmt.Errorf("dataset not found: %w", err)
-	}
-
-	rows, err := config.Storage.Query(
-		`SELECT column_name, column_type FROM dataset_columns WHERE dataset_id = $1`, id,
-	)
-	if err != nil {
-		return "", nil, err
-	}
-	defer rows.Close()
-
-	columnTypes = make(map[string]string)
-	for rows.Next() {
-		var name, colType string
-		if err := rows.Scan(&name, &colType); err != nil {
-			return "", nil, err
-		}
-		columnTypes[name] = colType
-	}
-
-	return tableName, columnTypes, nil
-}
-
 // GetDatasetRows reads all rows from a dataset's dynamic table.
 func GetDatasetRows(tableName string) ([]map[string]any, error) {
 	rows, err := config.Storage.Query(fmt.Sprintf("SELECT * FROM %s", tableName))

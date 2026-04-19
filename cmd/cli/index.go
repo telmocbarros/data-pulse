@@ -8,7 +8,8 @@ import (
 	"os"
 
 	"github.com/telmocbarros/data-pulse/config"
-	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
+	datasetUploadRepository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
 	profilerService "github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
@@ -94,7 +95,7 @@ func runProfiler(datasetId string) {
 }
 
 func listDatasets() {
-	datasets, err := repository.ListDatasets()
+	datasets, err := datasetUploadRepository.ListDatasets()
 	if err != nil {
 		log.Printf("Error fetching datasets: %v\n", err)
 		return
@@ -120,7 +121,7 @@ func listDatasets() {
 }
 
 func storeFile(datasetId string, filePath string, fileName string) {
-	if err := repository.StoreRawFile(datasetId, filePath, fileName); err != nil {
+	if err := datasetUploadRepository.StoreRawFile(datasetId, filePath, fileName); err != nil {
 		log.Printf("Error uploading file to MinIO: %v\n", err)
 		return
 	}

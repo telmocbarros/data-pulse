@@ -7,7 +7,8 @@ import (
 	"net/http"
 	"os"
 
-	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	datasetRepository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
+	datasetUploadRepository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 	jobRepo "github.com/telmocbarros/data-pulse/internal/repository/job"
 	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
 	"github.com/telmocbarros/data-pulse/internal/service/jobmanager"
@@ -16,7 +17,6 @@ import (
 
 func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 
-	
 	err := r.ParseMultipartForm(10 << 20)
 	if err != nil {
 		fmt.Println("Error retrieving multipart form")
@@ -93,7 +93,7 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		if err := repository.StoreRawFile(datasetId, tmpPath, fileName); err != nil {
+		if err := datasetUploadRepository.StoreRawFile(datasetId, tmpPath, fileName); err != nil {
 			fmt.Println("Error uploading file to MinIO:", err)
 		}
 
@@ -104,7 +104,7 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		jobmanager.Default.Submit(profilingJobID, func(ctx context.Context, progressFn func(int)) error {
-			tableName, columnTypes, err := repository.GetDatasetById(datasetId)
+			tableName, columnTypes, err := datasetRepository.GetDatasetById(datasetId)
 			if err != nil {
 				return err
 			}

@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"strings"
 
-	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
-	profilerRepo "github.com/telmocbarros/data-pulse/internal/repository/profiler"
+	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
 	jobRepo "github.com/telmocbarros/data-pulse/internal/repository/job"
+	profilerRepo "github.com/telmocbarros/data-pulse/internal/repository/profiler"
 	"github.com/telmocbarros/data-pulse/internal/service/jobmanager"
 	profilerService "github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
