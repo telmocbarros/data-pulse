@@ -38,25 +38,51 @@ func GetSingleDataset(id string, graphType string) (map[string]any, error) {
 			break
 		}
 		if index == len(datasetGraphTypes) {
-			return nil, errors.New("Invalid graphtype")
+			return nil, errors.New("Please insert a valid value for graphtype")
 		}
 	}
 	tableName, columns, err := repository.GetDatasetById(id)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("Mambos------> ", tableName)
-
-	chart, err := repository.GetDatasetChart(id, graphType)
-	if err != nil {
-		return nil, err
+	chart := make(map[string][]any, 0)
+	switch graphType {
+	case "histogram":
+		histogramData, err := repository.GetHistogramFromDataset(id, 10)
+		if err != nil {
+			return nil, err
+		}
+		for key, val := range histogramData {
+			chart[key] = make([]any, len(val))
+			for i, bucket := range val {
+				chart[key][i] = bucket
+			}
+		}
+	case "scatter":
+		scatterPlotData, err := repository.GetScatterPlotFromDataset(id, tableName, []string{"rating", "price"})
+		if err != nil {
+			return nil, err
+		}
+		for key, val := range scatterPlotData {
+			chart[key] = make([]any, len(val))
+			for i, data := range val {
+				chart[key][i] = data
+			}
+		}
+	case "timeseries":
+		fmt.Println("Not yet supported")
+	case "correlation-matrix":
+		fmt.Println("Not yet supported")
+	case "category-breakdown":
+		fmt.Println("Not yet supported")
+	default:
+		return nil, errors.New("Non existent graph type")
 	}
-	fmt.Println("Outros Mambos------> ", chart)
 
 	return map[string]any{
 		"tableName": tableName,
 		"columns":   columns,
-		"histogram": chart,
+		"chart":     chart,
 	}, nil
 
 }

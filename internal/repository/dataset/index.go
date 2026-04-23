@@ -36,7 +36,49 @@ func GetDatasetById(id string) (tableName string, columnTypes map[string]string,
 	return tableName, columnTypes, nil
 }
 
-func GetDatasetChart(datasetId string, graphType string) (charts map[string][]models.HistogramBucket, err error) {
+func GetScatterPlotFromDataset(datasetId string, tableName string, columns []string) (scatterPlotData map[string][]map[string]float64, err error) {
+	rows, err := config.Storage.Query("SELECT id, column_name FROM numeric_profiles where column_name in ($1, $2)", columns[0], columns[1])
+	if err != nil {
+		return nil, fmt.Errorf("Numeric profile not found: %w", err)
+	}
+	var columnId string
+	var columnName string
+	scatterPlotMetadata := make(map[string]string)
+
+	for rows.Next() {
+		if err := rows.Scan(&columnId, &columnName); err != nil {
+			return nil, err
+		}
+
+		scatterPlotMetadata[columnName] = columnId
+	}
+	rows.Close()
+
+	scatterPlotData = make(map[string][]map[string]float64)
+	for key := range scatterPlotMetadata {
+		rows, err = config.Storage.Query(fmt.Sprintf("SELECT entry_date, %s FROM %s ORDER BY entry_date ASC LIMIT 1000", key, tableName))
+		if err != nil {
+			return nil, err
+		}
+
+		defer rows.Close()
+
+		chart := make([]map[string]float64, 0)
+		for rows.Next() {
+			var entryDate string
+			var value float64
+			if err := rows.Scan(&entryDate, &value); err != nil {
+				return nil, err
+			}
+			element := map[string]float64{entryDate: value}
+			chart = append(chart, element)
+		}
+		scatterPlotData[key] = chart
+	}
+	return scatterPlotData, nil
+}
+
+func GetHistogramFromDataset(datasetId string, numBuckets int64) (histogramData map[string][]models.HistogramBucket, err error) {
 	rows, err := config.Storage.Query("SELECT id, column_name FROM numeric_profiles where dataset_id = $1", datasetId)
 	if err != nil {
 		return nil, fmt.Errorf("Numeric profile not found: %w", err)
@@ -46,12 +88,12 @@ func GetDatasetChart(datasetId string, graphType string) (charts map[string][]mo
 	var columnName string
 	histogramMetadata := make(map[string]string)
 
-	charts = make(map[string][]models.HistogramBucket)
+	histogramData = make(map[string][]models.HistogramBucket)
 	for rows.Next() {
 		if err := rows.Scan(&histogramProfileId, &columnName); err != nil {
 			return nil, err
 		}
-		fmt.Println("Fetching datasets columns and respective IDs")
+
 		histogramMetadata[columnName] = histogramProfileId
 	}
 	rows.Close()
@@ -73,9 +115,8 @@ func GetDatasetChart(datasetId string, graphType string) (charts map[string][]mo
 			}
 			chart = append(chart, models.HistogramBucket{Min: bucketMin, Max: bucketMax, Count: count})
 		}
-		charts[key] = chart
+		histogramData[key] = chart
 	}
 
 	return
-
 }
