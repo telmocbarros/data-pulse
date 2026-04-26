@@ -3,7 +3,10 @@ package dataset
 import (
 	"errors"
 	"fmt"
+	"log"
+	"net/url"
 	"slices"
+	"sort"
 	"time"
 
 	"github.com/telmocbarros/data-pulse/internal/columntype"
@@ -33,8 +36,63 @@ func goTypeToDBType(val any) string {
 	}
 }
 
-func GetSingleDataset(id string, graphType string) (map[string]any, error) {
-	if !slices.Contains(datasetGraphTypes, graphType) {
+// resolveTimeseriesParams validates and defaults the timeseries query params
+// against the dataset's column types. Returns x, ys, series, seriesValue.
+// series is "" when no filter is requested.
+func resolveTimeseriesParams(query url.Values, columns map[string]string) (string, []string, string, string, error) {
+	x := query.Get("x")
+	if x == "" {
+		dateCols := columnsOfType(columns, columntype.IS_DATE)
+		if len(dateCols) == 0 {
+			return "", nil, "", "", errors.New("dataset has no date column for x axis")
+		}
+		x = dateCols[0]
+	} else if columns[x] != columntype.IS_DATE {
+		return "", nil, "", "", fmt.Errorf("x column %q is not a date", x)
+	}
+
+	ys := query["y"]
+	if len(ys) == 0 {
+		numCols := columnsOfType(columns, columntype.IS_NUMERICAL)
+		if len(numCols) == 0 {
+			return "", nil, "", "", errors.New("dataset has no numeric column for y axis")
+		}
+		ys = []string{numCols[0]}
+	} else {
+		for _, y := range ys {
+			if columns[y] != columntype.IS_NUMERICAL {
+				return "", nil, "", "", fmt.Errorf("y column %q is not numeric", y)
+			}
+		}
+	}
+
+	series := query.Get("series")
+	seriesValue := query.Get("seriesValue")
+	if series != "" {
+		if columns[series] != columntype.IS_CATEGORICAL {
+			return "", nil, "", "", fmt.Errorf("series column %q is not categorical", series)
+		}
+		if seriesValue == "" {
+			return "", nil, "", "", errors.New("seriesValue is required when series is set")
+		}
+	}
+	return x, ys, series, seriesValue, nil
+}
+
+func columnsOfType(columns map[string]string, want string) []string {
+	out := make([]string, 0)
+	for name, t := range columns {
+		if t == want {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func GetSingleDataset(id string, graphType string, query url.Values) (map[string]any, error) {
+	if len(graphType) > 0 && !slices.Contains(datasetGraphTypes, graphType) {
+		log.Println("Invalid graph type")
 		return nil, errors.New("Please insert a valid value for graphtype")
 	}
 
@@ -42,6 +100,7 @@ func GetSingleDataset(id string, graphType string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("Computing %s for dataset %s (table %s)\n", graphType, id, tableName)
 	chart := make(map[string]any)
 	switch graphType {
 	case "histogram":
@@ -56,6 +115,7 @@ func GetSingleDataset(id string, graphType string) (map[string]any, error) {
 			}
 			chart[key] = bucketList
 		}
+		fmt.Printf("Histogram computed for %d columns\n", len(histogramData))
 	case "scatter":
 		// TODO: chosen columns should be dynamic.
 		scatterPlotData, err := repository.GetScatterPlotFromDataset(id, tableName, []string{"rating", "price"})
@@ -69,17 +129,24 @@ func GetSingleDataset(id string, graphType string) (map[string]any, error) {
 			}
 			chart[key] = pointList
 		}
+		fmt.Printf("Scatter computed for %d columns\n", len(scatterPlotData))
 	case "timeseries":
-		// TODO: chosen columns should be dynamic.
-		timeseriesPlotData, err := repository.GetTimeseriesPlotFromDataset(id, tableName, "Webcam HD")
+		x, ys, series, seriesValue, err := resolveTimeseriesParams(query, columns)
 		if err != nil {
 			return nil, err
 		}
-		points := make([]any, len(timeseriesPlotData))
-		for i, point := range timeseriesPlotData {
-			points[i] = point
+		points, err := repository.GetTimeseriesPlotFromDataset(tableName, x, ys, series, seriesValue)
+		if err != nil {
+			return nil, err
+		}
+		chart["x"] = x
+		chart["y"] = ys
+		if series != "" {
+			chart["series"] = series
+			chart["seriesValue"] = seriesValue
 		}
 		chart["data"] = points
+		fmt.Printf("Timeseries computed with %d points (x=%s, y=%v)\n", len(points), x, ys)
 	case "correlation-matrix":
 		numericCols := make([]string, 0, len(columns))
 		for name, colType := range columns {
@@ -87,13 +154,17 @@ func GetSingleDataset(id string, graphType string) (map[string]any, error) {
 				numericCols = append(numericCols, name)
 			}
 		}
+		fmt.Printf("Correlation matrix: %d numeric columns\n", len(numericCols))
 		matrix, err := repository.GetCorrelationMatrixFromDataset(id, tableName, numericCols)
 		if err != nil {
 			return nil, err
 		}
 		chart["matrix"] = matrix
+		fmt.Printf("Correlation matrix computed with %d rows\n", len(matrix))
 	case "category-breakdown":
 		fmt.Println("Not yet supported")
+	default:
+		log.Println("Graph type not provided")
 	}
 
 	return map[string]any{

@@ -30,6 +30,7 @@ func ListDatasetsHandler(w http.ResponseWriter, r *http.Request) {
 // GetDatasetHandler returns metadata for a specific dataset.
 // GET /api/datasets/:id/
 func GetDatasetHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("Get Dataset Handler...")
 	datasetId := r.PathValue("id")
 	if len(datasetId) == 0 {
 		log.Println("Invalid Id sent: ", datasetId)
@@ -44,7 +45,7 @@ func GetDatasetHandler(w http.ResponseWriter, r *http.Request) {
 
 	query := r.URL.Query()
 	graphType := query.Get("graphtype")
-	dataset, err := service.GetSingleDataset(datasetId, graphType)
+	dataset, err := service.GetSingleDataset(datasetId, graphType, query)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode("Server error")

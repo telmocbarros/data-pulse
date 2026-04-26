@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/telmocbarros/data-pulse/config"
 	"github.com/telmocbarros/data-pulse/internal/handler"
@@ -23,63 +22,21 @@ func main() {
 
 	jobmanager.Init(4)
 
-	http.HandleFunc("/health", health)
+	mux := http.NewServeMux()
 
-	http.HandleFunc("/api/datasets/", func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/api/datasets/")
+	mux.HandleFunc("GET /health", health)
 
-		if path == "" {
-			switch r.Method {
-			case http.MethodGet:
-				handler.ListDatasetsHandler(w, r)
-			case http.MethodPost:
-				handler.FileUploadHandler(w, r)
-			default:
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			}
-			return
-		}
+	mux.HandleFunc("GET /api/datasets/{$}", handler.ListDatasetsHandler)
+	mux.HandleFunc("POST /api/datasets/{$}", handler.FileUploadHandler)
+	mux.HandleFunc("GET /api/datasets/{id}", handler.GetDatasetHandler)
+	mux.HandleFunc("GET /api/datasets/{id}/profile", handler.GetProfileHandler)
+	mux.HandleFunc("POST /api/datasets/{id}/profile", handler.CreateProfileHandler)
 
-		// /api/datasets/{id}/profile
-		if strings.HasSuffix(path, "/profile") {
-			switch r.Method {
-			case http.MethodGet:
-				handler.GetProfileHandler(w, r)
-			case http.MethodPost:
-				handler.CreateProfileHandler(w, r)
-			default:
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			}
-			return
-		}
-
-		http.Error(w, "Not found", http.StatusNotFound)
-	})
-
-	http.HandleFunc("/api/datasets/{id}", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			handler.GetDatasetHandler(w, r)
-			return
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	http.HandleFunc("/api/jobs/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/cancel") && r.Method == http.MethodPost {
-			handler.CancelJobHandler(w, r)
-			return
-		}
-		if r.Method == http.MethodGet {
-			handler.GetJobHandler(w, r)
-			return
-		}
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	})
+	mux.HandleFunc("GET /api/jobs/{id}", handler.GetJobHandler)
+	mux.HandleFunc("POST /api/jobs/{id}/cancel", handler.CancelJobHandler)
 
 	fmt.Println("Listening on PORT 8080 ...")
-	http.ListenAndServe(":8080", nil)
+	http.ListenAndServe(":8080", mux)
 }
 
 func health(w http.ResponseWriter, r *http.Request) {

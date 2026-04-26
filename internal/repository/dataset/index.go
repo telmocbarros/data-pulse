@@ -3,10 +3,12 @@ package dataset
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/telmocbarros/data-pulse/config"
 	"github.com/telmocbarros/data-pulse/internal/models"
 	profilerRepo "github.com/telmocbarros/data-pulse/internal/repository/profiler"
+	"github.com/telmocbarros/data-pulse/internal/sqlsafe"
 )
 
 // GetDatasetById returns the table_name and column types for a dataset.
@@ -123,14 +125,6 @@ func GetHistogramFromDataset(datasetId string, numBuckets int64) (histogramData 
 	return
 }
 
-type TimeseriesDataPoint struct {
-	ProductName string
-	EntryDate   string
-	Price       float64
-	Quantity    float64
-	Rating      float64
-}
-
 // GetCorrelationMatrixFromDataset returns a symmetric Pearson correlation
 // matrix for the dataset's numeric columns. Missing pairs (CORR returned NULL)
 // are omitted from the inner maps. If no rows are stored yet, this falls back
@@ -190,30 +184,64 @@ func readCorrelationMatrix(datasetId string) (map[string]map[string]float64, err
 	return matrix, nil
 }
 
-func GetTimeseriesPlotFromDataset(datasetId string, tableName string, productName string) (timeseriesPlotData []TimeseriesDataPoint, err error) {
-	// Depending on the table, I'll have to provide to the user which values can be chosen
-	// to be presented as a timeseries plot.
-	// Current example: product_name with price | rating | quantity
-	rows, err := config.Storage.Query(
-		fmt.Sprintf("SELECT product_name, entry_date, price, quantity, rating FROM %s WHERE product_name = $1 ORDER BY entry_date ASC", tableName),
-		productName,
-	)
+// GetTimeseriesPlotFromDataset returns rows ordered by xColumn, projecting
+// xColumn and every yColumn. If seriesColumn is non-empty the rows are
+// filtered where seriesColumn = seriesValue. All identifiers must already be
+// validated by the caller against dataset_columns.
+func GetTimeseriesPlotFromDataset(
+	tableName string,
+	xColumn string,
+	yColumns []string,
+	seriesColumn string,
+	seriesValue string,
+) ([]map[string]any, error) {
+	if !sqlsafe.IsValidIdentifier(tableName) {
+		return nil, fmt.Errorf("invalid table name: %q", tableName)
+	}
+	if !sqlsafe.IsValidIdentifier(xColumn) {
+		return nil, fmt.Errorf("invalid x column: %q", xColumn)
+	}
+	for _, y := range yColumns {
+		if !sqlsafe.IsValidIdentifier(y) {
+			return nil, fmt.Errorf("invalid y column: %q", y)
+		}
+	}
+	if seriesColumn != "" && !sqlsafe.IsValidIdentifier(seriesColumn) {
+		return nil, fmt.Errorf("invalid series column: %q", seriesColumn)
+	}
+
+	selectCols := append([]string{xColumn}, yColumns...)
+	var query strings.Builder
+	fmt.Fprintf(&query, "SELECT %s FROM %s", strings.Join(selectCols, ", "), tableName)
+	args := []any{}
+	if seriesColumn != "" {
+		fmt.Fprintf(&query, " WHERE %s = $1", seriesColumn)
+		args = append(args, seriesValue)
+	}
+	fmt.Fprintf(&query, " ORDER BY %s ASC", xColumn)
+
+	rows, err := config.Storage.Query(query.String(), args...)
 	if err != nil {
-		return nil, fmt.Errorf("Dataset data not found: %w", err)
+		return nil, fmt.Errorf("timeseries query: %w", err)
 	}
 	defer rows.Close()
 
-	timeseriesPlotData = make([]TimeseriesDataPoint, 0)
-
+	out := make([]map[string]any, 0)
 	for rows.Next() {
-		var entry TimeseriesDataPoint
-		err := rows.Scan(&entry.ProductName, &entry.EntryDate, &entry.Price, &entry.Quantity, &entry.Rating)
-		if err != nil {
+		scanTargets := make([]any, len(selectCols))
+		holders := make([]any, len(selectCols))
+		for i := range scanTargets {
+			holders[i] = &scanTargets[i]
+		}
+		if err := rows.Scan(holders...); err != nil {
 			return nil, err
 		}
-
-		timeseriesPlotData = append(timeseriesPlotData, entry)
+		row := make(map[string]any, len(selectCols))
+		row["x"] = scanTargets[0]
+		for i, y := range yColumns {
+			row[y] = scanTargets[i+1]
+		}
+		out = append(out, row)
 	}
-
-	return timeseriesPlotData, nil
+	return out, nil
 }

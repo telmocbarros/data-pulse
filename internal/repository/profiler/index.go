@@ -4,12 +4,12 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/telmocbarros/data-pulse/config"
 	"github.com/telmocbarros/data-pulse/internal/models"
+	"github.com/telmocbarros/data-pulse/internal/sqlsafe"
 )
 
 // StoreProfile persists a DatasetProfiler to the database.
@@ -359,21 +359,16 @@ type CorrelationPair struct {
 	PearsonR *float64
 }
 
-// validIdentifier guards against SQL injection when interpolating column or
-// table names into a query string. Postgres can't parameterize identifiers,
-// so this is the only safe path.
-var validIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
 // ComputeCorrelationMatrix runs Postgres CORR() across every unordered pair of
 // numeric columns in tableName and returns the upper-triangle results.
 // Returns an empty slice when fewer than 2 columns are supplied.
 func ComputeCorrelationMatrix(tableName string, numericColumns []string) ([]CorrelationPair, error) {
-	if !validIdentifier.MatchString(tableName) {
+	if !sqlsafe.IsValidIdentifier(tableName) {
 		return nil, fmt.Errorf("invalid table name: %q", tableName)
 	}
 	cols := make([]string, 0, len(numericColumns))
 	for _, c := range numericColumns {
-		if !validIdentifier.MatchString(c) {
+		if !sqlsafe.IsValidIdentifier(c) {
 			return nil, fmt.Errorf("invalid column name: %q", c)
 		}
 		cols = append(cols, c)
