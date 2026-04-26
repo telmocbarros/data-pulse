@@ -423,6 +423,34 @@ func ComputeCorrelationMatrix(tableName string, numericColumns []string) ([]Corr
 	return pairs, nil
 }
 
+// GetCategoryBreakdown returns the most-frequent values for a categorical
+// column, ordered by descending count and capped at limit.
+func GetCategoryBreakdown(datasetId string, columnName string, limit int) ([]models.Occurrence, error) {
+	rows, err := config.Storage.Query(
+		`SELECT v.value, v.count
+		 FROM category_profile_frequent_values v
+		 JOIN category_profiles p ON p.id = v.category_profile_id
+		 WHERE p.dataset_id = $1 AND p.column_name = $2
+		 ORDER BY v.count DESC
+		 LIMIT $3`,
+		datasetId, columnName, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read category breakdown: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]models.Occurrence, 0)
+	for rows.Next() {
+		var occ models.Occurrence
+		if err := rows.Scan(&occ.Value, &occ.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, occ)
+	}
+	return out, nil
+}
+
 // StoreCorrelationMatrix computes pairwise Pearson correlations for the given
 // numeric columns and persists them. Existing rows for the dataset are replaced.
 func StoreCorrelationMatrix(datasetId string, tableName string, numericColumns []string) error {

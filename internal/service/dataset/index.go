@@ -7,10 +7,17 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/telmocbarros/data-pulse/internal/columntype"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
+	profilerRepo "github.com/telmocbarros/data-pulse/internal/repository/profiler"
+)
+
+const (
+	categoryBreakdownDefaultLimit = 20
+	categoryBreakdownMaxLimit     = 100
 )
 
 var datasetGraphTypes = []string{"histogram", "scatter", "timeseries", "correlation-matrix", "category-breakdown"}
@@ -77,6 +84,35 @@ func resolveTimeseriesParams(query url.Values, columns map[string]string) (strin
 		}
 	}
 	return x, ys, series, seriesValue, nil
+}
+
+// resolveCategoryBreakdownParams validates and defaults the category-breakdown
+// query params. column defaults to the first IS_CATEGORICAL column; limit
+// defaults to categoryBreakdownDefaultLimit and is capped at categoryBreakdownMaxLimit.
+func resolveCategoryBreakdownParams(query url.Values, columns map[string]string) (string, int, error) {
+	column := query.Get("column")
+	if column == "" {
+		catCols := columnsOfType(columns, columntype.IS_CATEGORICAL)
+		if len(catCols) == 0 {
+			return "", 0, errors.New("dataset has no categorical column")
+		}
+		column = catCols[0]
+	} else if columns[column] != columntype.IS_CATEGORICAL {
+		return "", 0, fmt.Errorf("column %q is not categorical", column)
+	}
+
+	limit := categoryBreakdownDefaultLimit
+	if raw := query.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			return "", 0, fmt.Errorf("invalid limit: %q", raw)
+		}
+		limit = parsed
+	}
+	if limit > categoryBreakdownMaxLimit {
+		limit = categoryBreakdownMaxLimit
+	}
+	return column, limit, nil
 }
 
 func columnsOfType(columns map[string]string, want string) []string {
@@ -162,7 +198,21 @@ func GetSingleDataset(id string, graphType string, query url.Values) (map[string
 		chart["matrix"] = matrix
 		fmt.Printf("Correlation matrix computed with %d rows\n", len(matrix))
 	case "category-breakdown":
-		fmt.Println("Not yet supported")
+		column, limit, err := resolveCategoryBreakdownParams(query, columns)
+		if err != nil {
+			return nil, err
+		}
+		breakdown, err := profilerRepo.GetCategoryBreakdown(id, column, limit)
+		if err != nil {
+			return nil, err
+		}
+		data := make([]any, len(breakdown))
+		for i, occ := range breakdown {
+			data[i] = map[string]any{"value": occ.Value, "count": occ.Count}
+		}
+		chart["column"] = column
+		chart["data"] = data
+		fmt.Printf("Category breakdown for %s: %d values\n", column, len(breakdown))
 	default:
 		log.Println("Graph type not provided")
 	}
