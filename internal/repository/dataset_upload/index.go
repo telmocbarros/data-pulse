@@ -141,11 +141,31 @@ func StoreDatasetColumns(columns [][]string, datasetId string) error {
 	return nil
 }
 
-// ListDatasets returns metadata for all datasets.
+// SoftDeleteDataset marks a dataset as deleted by setting deleted_at = NOW().
+// Returns an error if no row was affected (dataset missing or already deleted).
+func SoftDeleteDataset(id string) error {
+	res, err := config.Storage.Exec(
+		`UPDATE datasets SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("soft delete dataset: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("dataset not found")
+	}
+	return nil
+}
+
+// ListDatasets returns metadata for all alive (non-soft-deleted) datasets.
 func ListDatasets() ([]map[string]any, error) {
 	rows, err := config.Storage.Query(
 		`SELECT id, file_name, table_name, size, uploaded_by, description, created_at
-		 FROM datasets ORDER BY created_at DESC`,
+		 FROM datasets WHERE deleted_at IS NULL ORDER BY created_at DESC`,
 	)
 	if err != nil {
 		return nil, err

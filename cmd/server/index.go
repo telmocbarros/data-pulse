@@ -29,6 +29,8 @@ func main() {
 	mux.HandleFunc("GET /api/datasets/{$}", handler.ListDatasetsHandler)
 	mux.HandleFunc("POST /api/datasets/{$}", handler.FileUploadHandler)
 	mux.HandleFunc("GET /api/datasets/{id}", handler.GetDatasetHandler)
+	mux.HandleFunc("DELETE /api/datasets/{id}", handler.DeleteDatasetHandler)
+	mux.HandleFunc("POST /api/datasets/{id}/visualize", handler.VisualizeDatasetHandler)
 	mux.HandleFunc("GET /api/datasets/{id}/profile", handler.GetProfileHandler)
 	mux.HandleFunc("POST /api/datasets/{id}/profile", handler.CreateProfileHandler)
 
