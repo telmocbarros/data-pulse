@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+When the user asks for a review, refactor pass, or cleanup cycle, follow [docs/REVIEW_REFACTOR_PROCESS.md](docs/REVIEW_REFACTOR_PROCESS.md). The standards being enforced live in [PROJECT_SPEC.md](PROJECT_SPEC.md).
+
 ## Build & Run
 
 ```bash
