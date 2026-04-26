@@ -1,9 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/telmocbarros/data-pulse/config"
 	"github.com/telmocbarros/data-pulse/internal/handler"
@@ -35,8 +35,19 @@ func main() {
 	mux.HandleFunc("GET /api/jobs/{id}", handler.GetJobHandler)
 	mux.HandleFunc("POST /api/jobs/{id}/cancel", handler.CancelJobHandler)
 
-	fmt.Println("Listening on PORT 8080 ...")
-	http.ListenAndServe(":8080", mux)
+	srv := &http.Server{
+		Addr:              ":8080",
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
+
+	log.Println("Listening on PORT 8080 ...")
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatalf("Server failed: %v", err)
+	}
 }
 
 func health(w http.ResponseWriter, r *http.Request) {
