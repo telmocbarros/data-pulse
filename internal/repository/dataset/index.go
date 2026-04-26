@@ -81,47 +81,66 @@ func GetScatterPlotFromDataset(tableName string, xColumn string, yColumn string,
 	return out, nil
 }
 
-func GetHistogramFromDataset(datasetId string, numBuckets int64) (histogramData map[string][]models.HistogramBucket, err error) {
-	rows, err := config.Storage.Query("SELECT id, column_name FROM numeric_profiles where dataset_id = $1", datasetId)
+// GetHistogramFromDataset returns histogram buckets keyed by column name for
+// every numeric profile attached to the dataset. numBuckets is currently
+// ignored — bucket count is fixed at profiling time.
+func GetHistogramFromDataset(datasetId string, numBuckets int64) (map[string][]models.HistogramBucket, error) {
+	profiles, err := listNumericProfileIds(datasetId)
 	if err != nil {
-		return nil, fmt.Errorf("Numeric profile not found: %w", err)
+		return nil, err
 	}
 
-	var histogramProfileId string
-	var columnName string
-	histogramMetadata := make(map[string]string)
-
-	histogramData = make(map[string][]models.HistogramBucket)
-	for rows.Next() {
-		if err := rows.Scan(&histogramProfileId, &columnName); err != nil {
-			return nil, err
-		}
-
-		histogramMetadata[columnName] = histogramProfileId
-	}
-	rows.Close()
-
-	for key, val := range histogramMetadata {
-		rows, err = config.Storage.Query("SELECT bucket_min, bucket_max, count FROM numeric_profile_histograms WHERE numeric_profile_id = $1 ORDER BY bucket_min ASC", val)
+	out := make(map[string][]models.HistogramBucket, len(profiles))
+	for columnName, profileId := range profiles {
+		buckets, err := getHistogramBuckets(profileId)
 		if err != nil {
 			return nil, err
 		}
-
-		defer rows.Close()
-
-		chart := make([]models.HistogramBucket, 0)
-		for rows.Next() {
-			var bucketMin, bucketMax float64
-			var count int64
-			if err := rows.Scan(&bucketMin, &bucketMax, &count); err != nil {
-				return nil, err
-			}
-			chart = append(chart, models.HistogramBucket{Min: bucketMin, Max: bucketMax, Count: count})
-		}
-		histogramData[key] = chart
+		out[columnName] = buckets
 	}
+	return out, nil
+}
 
-	return
+func listNumericProfileIds(datasetId string) (map[string]string, error) {
+	rows, err := config.Storage.Query(
+		"SELECT id, column_name FROM numeric_profiles WHERE dataset_id = $1",
+		datasetId,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list numeric profiles: %w", err)
+	}
+	defer rows.Close()
+
+	profiles := make(map[string]string)
+	for rows.Next() {
+		var id, columnName string
+		if err := rows.Scan(&id, &columnName); err != nil {
+			return nil, err
+		}
+		profiles[columnName] = id
+	}
+	return profiles, nil
+}
+
+func getHistogramBuckets(profileId string) ([]models.HistogramBucket, error) {
+	rows, err := config.Storage.Query(
+		"SELECT bucket_min, bucket_max, count FROM numeric_profile_histograms WHERE numeric_profile_id = $1 ORDER BY bucket_min ASC",
+		profileId,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read histogram buckets: %w", err)
+	}
+	defer rows.Close()
+
+	buckets := make([]models.HistogramBucket, 0)
+	for rows.Next() {
+		var b models.HistogramBucket
+		if err := rows.Scan(&b.Min, &b.Max, &b.Count); err != nil {
+			return nil, err
+		}
+		buckets = append(buckets, b)
+	}
+	return buckets, nil
 }
 
 // GetCorrelationMatrixFromDataset returns a symmetric Pearson correlation
