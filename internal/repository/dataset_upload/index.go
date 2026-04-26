@@ -9,11 +9,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/telmocbarros/data-pulse/config"
+	"github.com/telmocbarros/data-pulse/internal/sqlsafe"
 )
 
 func StoreDataset(dbExecutor config.Executor, tableName string, datasetId string, rows []map[string]any) error {
-	if tableName == "" {
-		tableName = "json_datasets"
+	if len(rows) == 0 {
+		return nil
+	}
+	if !sqlsafe.IsValidIdentifier(tableName) {
+		return fmt.Errorf("invalid table name: %q", tableName)
 	}
 	// extract column names from the first row
 	columns := make([]string, 0, len(rows[0])+1)
@@ -23,6 +27,11 @@ func StoreDataset(dbExecutor config.Executor, tableName string, datasetId string
 			columns = append(columns, "entry_date")
 		} else {
 			columns = append(columns, key)
+		}
+	}
+	for _, c := range columns {
+		if !sqlsafe.IsValidIdentifier(c) {
+			return fmt.Errorf("invalid column name: %q", c)
 		}
 	}
 	numCols := len(columns)
@@ -66,6 +75,14 @@ func StoreDataset(dbExecutor config.Executor, tableName string, datasetId string
 }
 
 func CreateDatasetTable(fileExtension string, columns [][]string) (string, error) {
+	if !sqlsafe.IsValidIdentifier(fileExtension) {
+		return "", fmt.Errorf("invalid file extension: %q", fileExtension)
+	}
+	for _, col := range columns {
+		if !sqlsafe.IsValidIdentifier(col[0]) {
+			return "", fmt.Errorf("invalid column name: %q", col[0])
+		}
+	}
 
 	tableName := fmt.Sprintf("%s_datasets_%s", fileExtension, strings.ReplaceAll(uuid.New().String(), "-", ""))
 
@@ -75,11 +92,11 @@ func CreateDatasetTable(fileExtension string, columns [][]string) (string, error
 		if j > 0 {
 			query.WriteString(", ")
 		}
-		if col[0] == "created_at" {
-			fmt.Fprintf(&query, "%s %s", "entry_date", mapToDatabase(col[1]))
-		} else {
-			fmt.Fprintf(&query, "%s %s", col[0], mapToDatabase(col[1]))
+		name := col[0]
+		if name == "created_at" {
+			name = "entry_date"
 		}
+		fmt.Fprintf(&query, "%s %s", name, mapToDatabase(col[1]))
 	}
 	query.WriteString(")")
 
@@ -158,6 +175,9 @@ func ListDatasets() ([]map[string]any, error) {
 
 // GetDatasetRows reads all rows from a dataset's dynamic table.
 func GetDatasetRows(tableName string) ([]map[string]any, error) {
+	if !sqlsafe.IsValidIdentifier(tableName) {
+		return nil, fmt.Errorf("invalid table name: %q", tableName)
+	}
 	rows, err := config.Storage.Query(fmt.Sprintf("SELECT * FROM %s", tableName))
 	if err != nil {
 		return nil, fmt.Errorf("unable to query dataset table: %w", err)
