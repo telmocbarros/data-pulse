@@ -3,6 +3,7 @@ package dataset
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/telmocbarros/data-pulse/internal/columntype"
@@ -33,14 +34,10 @@ func goTypeToDBType(val any) string {
 }
 
 func GetSingleDataset(id string, graphType string) (map[string]any, error) {
-	for index, value := range datasetGraphTypes {
-		if graphType == value {
-			break
-		}
-		if index == len(datasetGraphTypes) {
-			return nil, errors.New("Please insert a valid value for graphtype")
-		}
+	if !slices.Contains(datasetGraphTypes, graphType) {
+		return nil, errors.New("Please insert a valid value for graphtype")
 	}
+
 	tableName, columns, err := repository.GetDatasetById(id)
 	if err != nil {
 		return nil, err
@@ -59,6 +56,7 @@ func GetSingleDataset(id string, graphType string) (map[string]any, error) {
 			}
 		}
 	case "scatter":
+		// TODO: chosen columns should be dynamic.
 		scatterPlotData, err := repository.GetScatterPlotFromDataset(id, tableName, []string{"rating", "price"})
 		if err != nil {
 			return nil, err
@@ -70,13 +68,19 @@ func GetSingleDataset(id string, graphType string) (map[string]any, error) {
 			}
 		}
 	case "timeseries":
-		fmt.Println("Not yet supported")
+		// TODO: chosen columns should be dynamic.
+		timeseriesPlotData, err := repository.GetTimeseriesPlotFromDataset(id, tableName, "Webcam HD")
+		if err != nil {
+			return nil, err
+		}
+		chart["data"] = make([]any, len(timeseriesPlotData))
+		for i, point := range timeseriesPlotData {
+			chart["data"][i] = point
+		}
 	case "correlation-matrix":
 		fmt.Println("Not yet supported")
 	case "category-breakdown":
 		fmt.Println("Not yet supported")
-	default:
-		return nil, errors.New("Non existent graph type")
 	}
 
 	return map[string]any{

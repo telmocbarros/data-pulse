@@ -120,3 +120,39 @@ func GetHistogramFromDataset(datasetId string, numBuckets int64) (histogramData 
 
 	return
 }
+
+type TimeseriesDataPoint struct {
+	ProductName string
+	EntryDate   string
+	Price       float64
+	Quantity    float64
+	Rating      float64
+}
+
+func GetTimeseriesPlotFromDataset(datasetId string, tableName string, productName string) (timeseriesPlotData []TimeseriesDataPoint, err error) {
+	// Depending on the table, I'll have to provide to the user which values can be chosen
+	// to be presented as a timeseries plot.
+	// Current example: product_name with price | rating | quantity
+	rows, err := config.Storage.Query(
+		fmt.Sprintf("SELECT product_name, entry_date, price, quantity, rating FROM %s WHERE product_name = $1 ORDER BY entry_date ASC", tableName),
+		productName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("Dataset data not found: %w", err)
+	}
+	defer rows.Close()
+
+	timeseriesPlotData = make([]TimeseriesDataPoint, 0)
+
+	for rows.Next() {
+		var entry TimeseriesDataPoint
+		err := rows.Scan(&entry.ProductName, &entry.EntryDate, &entry.Price, &entry.Quantity, &entry.Rating)
+		if err != nil {
+			return nil, err
+		}
+
+		timeseriesPlotData = append(timeseriesPlotData, entry)
+	}
+
+	return timeseriesPlotData, nil
+}
