@@ -18,25 +18,24 @@ type Executor interface {
 
 var Storage *sql.DB
 
+// SetupDatabase loads environment variables, opens the Postgres pool,
+// pings to verify connectivity, and assigns the pool to Storage.
 func SetupDatabase() error {
-	err := godotenv.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Unable to read configuration variables: %v\n", err)
-		os.Exit(1)
+	if err := godotenv.Load(); err != nil {
+		return fmt.Errorf("load env file: %w", err)
 	}
 
 	pool, err := sql.Open("pgx", os.Getenv("DATABASE_URL"))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("open database: %w", err)
 	}
 
 	pool.SetMaxOpenConns(25)
 	pool.SetMaxIdleConns(25)
 	pool.SetConnMaxLifetime(5 * time.Minute)
 
-	if err = pool.Ping(); err != nil {
-		return fmt.Errorf("connecting to database: %w", err)
+	if err := pool.Ping(); err != nil {
+		return fmt.Errorf("ping database: %w", err)
 	}
 
 	Storage = pool
