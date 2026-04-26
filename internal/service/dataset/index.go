@@ -18,6 +18,8 @@ import (
 const (
 	categoryBreakdownDefaultLimit = 20
 	categoryBreakdownMaxLimit     = 100
+	scatterDefaultLimit           = 1000
+	scatterMaxLimit               = 5000
 )
 
 var datasetGraphTypes = []string{"histogram", "scatter", "timeseries", "correlation-matrix", "category-breakdown"}
@@ -115,6 +117,57 @@ func resolveCategoryBreakdownParams(query url.Values, columns map[string]string)
 	return column, limit, nil
 }
 
+// resolveScatterParams validates and defaults the scatter query params.
+// x and y default to the first and second IS_NUMERICAL columns respectively.
+// limit defaults to scatterDefaultLimit and is capped at scatterMaxLimit.
+func resolveScatterParams(query url.Values, columns map[string]string) (string, string, int, error) {
+	numCols := columnsOfType(columns, columntype.IS_NUMERICAL)
+
+	x := query.Get("x")
+	if x == "" {
+		if len(numCols) == 0 {
+			return "", "", 0, errors.New("dataset has no numeric column for x axis")
+		}
+		x = numCols[0]
+	} else if columns[x] != columntype.IS_NUMERICAL {
+		return "", "", 0, fmt.Errorf("x column %q is not numeric", x)
+	}
+
+	y := query.Get("y")
+	if y == "" {
+		other := ""
+		for _, c := range numCols {
+			if c != x {
+				other = c
+				break
+			}
+		}
+		if other == "" {
+			return "", "", 0, errors.New("dataset needs at least two numeric columns for scatter")
+		}
+		y = other
+	} else if columns[y] != columntype.IS_NUMERICAL {
+		return "", "", 0, fmt.Errorf("y column %q is not numeric", y)
+	}
+
+	if x == y {
+		return "", "", 0, errors.New("x and y must be different columns")
+	}
+
+	limit := scatterDefaultLimit
+	if raw := query.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			return "", "", 0, fmt.Errorf("invalid limit: %q", raw)
+		}
+		limit = parsed
+	}
+	if limit > scatterMaxLimit {
+		limit = scatterMaxLimit
+	}
+	return x, y, limit, nil
+}
+
 func columnsOfType(columns map[string]string, want string) []string {
 	out := make([]string, 0)
 	for name, t := range columns {
@@ -153,19 +206,18 @@ func GetSingleDataset(id string, graphType string, query url.Values) (map[string
 		}
 		fmt.Printf("Histogram computed for %d columns\n", len(histogramData))
 	case "scatter":
-		// TODO: chosen columns should be dynamic.
-		scatterPlotData, err := repository.GetScatterPlotFromDataset(id, tableName, []string{"rating", "price"})
+		x, y, limit, err := resolveScatterParams(query, columns)
 		if err != nil {
 			return nil, err
 		}
-		for key, val := range scatterPlotData {
-			pointList := make([]any, len(val))
-			for i, data := range val {
-				pointList[i] = data
-			}
-			chart[key] = pointList
+		points, err := repository.GetScatterPlotFromDataset(tableName, x, y, limit)
+		if err != nil {
+			return nil, err
 		}
-		fmt.Printf("Scatter computed for %d columns\n", len(scatterPlotData))
+		chart["x"] = x
+		chart["y"] = y
+		chart["data"] = points
+		fmt.Printf("Scatter computed with %d points (x=%s, y=%s)\n", len(points), x, y)
 	case "timeseries":
 		x, ys, series, seriesValue, err := resolveTimeseriesParams(query, columns)
 		if err != nil {

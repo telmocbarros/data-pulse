@@ -40,46 +40,45 @@ func GetDatasetById(id string) (tableName string, columnTypes map[string]string,
 	return tableName, columnTypes, nil
 }
 
-func GetScatterPlotFromDataset(datasetId string, tableName string, columns []string) (scatterPlotData map[string][]map[string]float64, err error) {
-	rows, err := config.Storage.Query("SELECT id, column_name FROM numeric_profiles where column_name in ($1, $2)", columns[0], columns[1])
+// ScatterPoint is one (x, y) pair for the scatter chart.
+type ScatterPoint struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+// GetScatterPlotFromDataset returns up to limit (x, y) pairs from tableName.
+// xColumn and yColumn must already be validated as numeric by the caller;
+// this function additionally validates them as safe SQL identifiers.
+func GetScatterPlotFromDataset(tableName string, xColumn string, yColumn string, limit int) ([]ScatterPoint, error) {
+	if !sqlsafe.IsValidIdentifier(tableName) {
+		return nil, fmt.Errorf("invalid table name: %q", tableName)
+	}
+	if !sqlsafe.IsValidIdentifier(xColumn) {
+		return nil, fmt.Errorf("invalid x column: %q", xColumn)
+	}
+	if !sqlsafe.IsValidIdentifier(yColumn) {
+		return nil, fmt.Errorf("invalid y column: %q", yColumn)
+	}
+
+	query := fmt.Sprintf(
+		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL LIMIT $1",
+		xColumn, yColumn, tableName, xColumn, yColumn,
+	)
+	rows, err := config.Storage.Query(query, limit)
 	if err != nil {
-		return nil, fmt.Errorf("Numeric profile not found: %w", err)
+		return nil, fmt.Errorf("scatter query: %w", err)
 	}
-	var columnId string
-	var columnName string
-	scatterPlotMetadata := make(map[string]string)
+	defer rows.Close()
 
+	out := make([]ScatterPoint, 0)
 	for rows.Next() {
-		if err := rows.Scan(&columnId, &columnName); err != nil {
+		var p ScatterPoint
+		if err := rows.Scan(&p.X, &p.Y); err != nil {
 			return nil, err
 		}
-
-		scatterPlotMetadata[columnName] = columnId
+		out = append(out, p)
 	}
-	rows.Close()
-
-	scatterPlotData = make(map[string][]map[string]float64)
-	for key := range scatterPlotMetadata {
-		rows, err = config.Storage.Query(fmt.Sprintf("SELECT entry_date, %s FROM %s ORDER BY entry_date ASC LIMIT 1000", key, tableName))
-		if err != nil {
-			return nil, err
-		}
-
-		defer rows.Close()
-
-		chart := make([]map[string]float64, 0)
-		for rows.Next() {
-			var entryDate string
-			var value float64
-			if err := rows.Scan(&entryDate, &value); err != nil {
-				return nil, err
-			}
-			element := map[string]float64{entryDate: value}
-			chart = append(chart, element)
-		}
-		scatterPlotData[key] = chart
-	}
-	return scatterPlotData, nil
+	return out, nil
 }
 
 func GetHistogramFromDataset(datasetId string, numBuckets int64) (histogramData map[string][]models.HistogramBucket, err error) {
