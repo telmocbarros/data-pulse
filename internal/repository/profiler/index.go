@@ -1,8 +1,11 @@
 package profiler
 
 import (
+	"database/sql"
 	"fmt"
 	"math"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/telmocbarros/data-pulse/config"
@@ -346,4 +349,114 @@ func normaliseFloat(v float64) *float64 {
 		return nil
 	}
 	return &v
+}
+
+// CorrelationPair is one upper-triangle entry of the correlation matrix.
+// PearsonR is nil when CORR() returns NULL (constant or all-null pair).
+type CorrelationPair struct {
+	ColumnA  string
+	ColumnB  string
+	PearsonR *float64
+}
+
+// validIdentifier guards against SQL injection when interpolating column or
+// table names into a query string. Postgres can't parameterize identifiers,
+// so this is the only safe path.
+var validIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// ComputeCorrelationMatrix runs Postgres CORR() across every unordered pair of
+// numeric columns in tableName and returns the upper-triangle results.
+// Returns an empty slice when fewer than 2 columns are supplied.
+func ComputeCorrelationMatrix(tableName string, numericColumns []string) ([]CorrelationPair, error) {
+	if !validIdentifier.MatchString(tableName) {
+		return nil, fmt.Errorf("invalid table name: %q", tableName)
+	}
+	cols := make([]string, 0, len(numericColumns))
+	for _, c := range numericColumns {
+		if !validIdentifier.MatchString(c) {
+			return nil, fmt.Errorf("invalid column name: %q", c)
+		}
+		cols = append(cols, c)
+	}
+	sort.Strings(cols)
+	if len(cols) < 2 {
+		return []CorrelationPair{}, nil
+	}
+
+	var query strings.Builder
+	args := []any{}
+	argIdx := 1
+	first := true
+	pairs := make([]CorrelationPair, 0, len(cols)*(len(cols)-1)/2)
+	for i := 0; i < len(cols); i++ {
+		for j := i + 1; j < len(cols); j++ {
+			if !first {
+				query.WriteString(" UNION ALL ")
+			}
+			first = false
+			fmt.Fprintf(&query, "SELECT $%d::text AS a, $%d::text AS b, CORR(%s, %s) AS r FROM %s",
+				argIdx, argIdx+1, cols[i], cols[j], tableName)
+			args = append(args, cols[i], cols[j])
+			argIdx += 2
+			pairs = append(pairs, CorrelationPair{ColumnA: cols[i], ColumnB: cols[j]})
+		}
+	}
+
+	rows, err := config.Storage.Query(query.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("compute correlation: %w", err)
+	}
+	defer rows.Close()
+
+	results := make(map[[2]string]*float64, len(pairs))
+	for rows.Next() {
+		var a, b string
+		var r sql.NullFloat64
+		if err := rows.Scan(&a, &b, &r); err != nil {
+			return nil, err
+		}
+		if r.Valid {
+			v := r.Float64
+			results[[2]string{a, b}] = &v
+		} else {
+			results[[2]string{a, b}] = nil
+		}
+	}
+	for i := range pairs {
+		pairs[i].PearsonR = results[[2]string{pairs[i].ColumnA, pairs[i].ColumnB}]
+	}
+	return pairs, nil
+}
+
+// StoreCorrelationMatrix computes pairwise Pearson correlations for the given
+// numeric columns and persists them. Existing rows for the dataset are replaced.
+func StoreCorrelationMatrix(datasetId string, tableName string, numericColumns []string) error {
+	pairs, err := ComputeCorrelationMatrix(tableName, numericColumns)
+	if err != nil {
+		return err
+	}
+	if len(pairs) == 0 {
+		return nil
+	}
+
+	if _, err := config.Storage.Exec(
+		"DELETE FROM correlation_matrices WHERE dataset_id = $1", datasetId,
+	); err != nil {
+		return fmt.Errorf("clear existing correlation rows: %w", err)
+	}
+
+	var query strings.Builder
+	query.WriteString("INSERT INTO correlation_matrices (dataset_id, column_a, column_b, pearson_r) VALUES ")
+	vals := []any{}
+	for i, p := range pairs {
+		if i > 0 {
+			query.WriteString(", ")
+		}
+		query.WriteString(fmt.Sprintf("($%d, $%d, $%d, $%d)", i*4+1, i*4+2, i*4+3, i*4+4))
+		vals = append(vals, datasetId, p.ColumnA, p.ColumnB, p.PearsonR)
+	}
+	if _, err := config.Storage.Exec(query.String(), vals...); err != nil {
+		return fmt.Errorf("insert correlation rows: %w", err)
+	}
+	return nil
 }

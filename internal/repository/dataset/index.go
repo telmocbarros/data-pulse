@@ -1,10 +1,12 @@
 package dataset
 
 import (
+	"database/sql"
 	"fmt"
 
 	"github.com/telmocbarros/data-pulse/config"
 	"github.com/telmocbarros/data-pulse/internal/models"
+	profilerRepo "github.com/telmocbarros/data-pulse/internal/repository/profiler"
 )
 
 // GetDatasetById returns the table_name and column types for a dataset.
@@ -127,6 +129,65 @@ type TimeseriesDataPoint struct {
 	Price       float64
 	Quantity    float64
 	Rating      float64
+}
+
+// GetCorrelationMatrixFromDataset returns a symmetric Pearson correlation
+// matrix for the dataset's numeric columns. Missing pairs (CORR returned NULL)
+// are omitted from the inner maps. If no rows are stored yet, this falls back
+// to computing on demand from numericColumns and persisting the result.
+func GetCorrelationMatrixFromDataset(datasetId string, tableName string, numericColumns []string) (map[string]map[string]float64, error) {
+	matrix, err := readCorrelationMatrix(datasetId)
+	if err != nil {
+		return nil, err
+	}
+	if len(matrix) == 0 && len(numericColumns) >= 2 {
+		if err := profilerRepo.StoreCorrelationMatrix(datasetId, tableName, numericColumns); err != nil {
+			return nil, err
+		}
+		matrix, err = readCorrelationMatrix(datasetId)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, col := range numericColumns {
+		if _, ok := matrix[col]; !ok {
+			matrix[col] = make(map[string]float64)
+		}
+		matrix[col][col] = 1
+	}
+	return matrix, nil
+}
+
+func readCorrelationMatrix(datasetId string) (map[string]map[string]float64, error) {
+	rows, err := config.Storage.Query(
+		"SELECT column_a, column_b, pearson_r FROM correlation_matrices WHERE dataset_id = $1",
+		datasetId,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read correlation matrix: %w", err)
+	}
+	defer rows.Close()
+
+	matrix := make(map[string]map[string]float64)
+	for rows.Next() {
+		var a, b string
+		var r sql.NullFloat64
+		if err := rows.Scan(&a, &b, &r); err != nil {
+			return nil, err
+		}
+		if !r.Valid {
+			continue
+		}
+		if _, ok := matrix[a]; !ok {
+			matrix[a] = make(map[string]float64)
+		}
+		if _, ok := matrix[b]; !ok {
+			matrix[b] = make(map[string]float64)
+		}
+		matrix[a][b] = r.Float64
+		matrix[b][a] = r.Float64
+	}
+	return matrix, nil
 }
 
 func GetTimeseriesPlotFromDataset(datasetId string, tableName string, productName string) (timeseriesPlotData []TimeseriesDataPoint, err error) {

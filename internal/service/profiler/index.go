@@ -33,6 +33,16 @@ func ProfileAndStore(datasetId string, tableName string, columnTypes map[string]
 		return fmt.Errorf("error storing profile: %w", err)
 	}
 
+	numericCols := make([]string, 0, len(columnTypes))
+	for name, colType := range columnTypes {
+		if colType == columntype.IS_NUMERICAL {
+			numericCols = append(numericCols, name)
+		}
+	}
+	if err := profilerRepo.StoreCorrelationMatrix(datasetId, tableName, numericCols); err != nil {
+		return fmt.Errorf("error storing correlation matrix: %w", err)
+	}
+
 	return nil
 }
 

@@ -42,7 +42,7 @@ func GetSingleDataset(id string, graphType string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	chart := make(map[string][]any, 0)
+	chart := make(map[string]any)
 	switch graphType {
 	case "histogram":
 		histogramData, err := repository.GetHistogramFromDataset(id, 10)
@@ -50,10 +50,11 @@ func GetSingleDataset(id string, graphType string) (map[string]any, error) {
 			return nil, err
 		}
 		for key, val := range histogramData {
-			chart[key] = make([]any, len(val))
+			bucketList := make([]any, len(val))
 			for i, bucket := range val {
-				chart[key][i] = bucket
+				bucketList[i] = bucket
 			}
+			chart[key] = bucketList
 		}
 	case "scatter":
 		// TODO: chosen columns should be dynamic.
@@ -62,10 +63,11 @@ func GetSingleDataset(id string, graphType string) (map[string]any, error) {
 			return nil, err
 		}
 		for key, val := range scatterPlotData {
-			chart[key] = make([]any, len(val))
+			pointList := make([]any, len(val))
 			for i, data := range val {
-				chart[key][i] = data
+				pointList[i] = data
 			}
+			chart[key] = pointList
 		}
 	case "timeseries":
 		// TODO: chosen columns should be dynamic.
@@ -73,12 +75,23 @@ func GetSingleDataset(id string, graphType string) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		chart["data"] = make([]any, len(timeseriesPlotData))
+		points := make([]any, len(timeseriesPlotData))
 		for i, point := range timeseriesPlotData {
-			chart["data"][i] = point
+			points[i] = point
 		}
+		chart["data"] = points
 	case "correlation-matrix":
-		fmt.Println("Not yet supported")
+		numericCols := make([]string, 0, len(columns))
+		for name, colType := range columns {
+			if colType == columntype.IS_NUMERICAL {
+				numericCols = append(numericCols, name)
+			}
+		}
+		matrix, err := repository.GetCorrelationMatrixFromDataset(id, tableName, numericCols)
+		if err != nil {
+			return nil, err
+		}
+		chart["matrix"] = matrix
 	case "category-breakdown":
 		fmt.Println("Not yet supported")
 	}
