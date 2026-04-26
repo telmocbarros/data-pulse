@@ -160,6 +160,10 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 	dataCh <- state.firstRow
 
 	var wg sync.WaitGroup
+	var (
+		uploadErr   error
+		uploadErrMu sync.Mutex
+	)
 
 	// Error collector — drains errorsCh into the returned validationErrors slice
 	wg.Go(func() {
@@ -170,7 +174,11 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 
 	// Stage 3: Store — batches rows from dataCh and writes to DB
 	wg.Go(func() {
-		uploadJsonDataset(ctx, dataCh, state.tableName, state.datasetId, progressFn)
+		if err := uploadJsonDataset(ctx, dataCh, state.tableName, state.datasetId, progressFn); err != nil {
+			uploadErrMu.Lock()
+			uploadErr = err
+			uploadErrMu.Unlock()
+		}
 	})
 
 	var errWg sync.WaitGroup
@@ -243,6 +251,9 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if uploadErr != nil {
+		return uploadErr
+	}
 
 	if len(validationErrors) > 0 {
 		fmt.Printf("Completed with %d validation errors\n", len(validationErrors))
@@ -251,13 +262,13 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 	return nil
 }
 
-func uploadJsonDataset(ctx context.Context, dataCh chan map[string]any, tableName string, datasetId string, progressFn func(int)) {
-	fmt.Println("Processing dataset ...")
-
+// uploadJsonDataset drains dataCh into a transactional batch insert.
+// Returns the first error encountered (transaction begin, batch insert,
+// commit, or context cancellation). On error the transaction is rolled back.
+func uploadJsonDataset(ctx context.Context, dataCh chan map[string]any, tableName string, datasetId string, progressFn func(int)) error {
 	tx, err := config.Storage.Begin()
 	if err != nil {
-		fmt.Println("Could not begin transaction:", err)
-		return
+		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -266,17 +277,14 @@ func uploadJsonDataset(ctx context.Context, dataCh chan map[string]any, tableNam
 	batchCount := 0
 
 	for row := range dataCh {
-		select {
-		case <-ctx.Done():
-			return
-		default:
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 
 		batch = append(batch, row)
 		if len(batch) >= batchSize {
 			if err := repository.StoreDataset(tx, tableName, datasetId, batch); err != nil {
-				fmt.Println("Could not persist the dataset")
-				return
+				return fmt.Errorf("persist batch: %w", err)
 			}
 			batchCount++
 			progress := 40 + min(batchCount*5, 55)
@@ -285,15 +293,14 @@ func uploadJsonDataset(ctx context.Context, dataCh chan map[string]any, tableNam
 		}
 	}
 
-	// flush remaining rows
 	if len(batch) > 0 {
 		if err := repository.StoreDataset(tx, tableName, datasetId, batch); err != nil {
-			fmt.Println("Could not persist the dataset")
-			return
+			return fmt.Errorf("persist final batch: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		fmt.Println("Could not commit transaction:", err)
+		return fmt.Errorf("commit transaction: %w", err)
 	}
+	return nil
 }

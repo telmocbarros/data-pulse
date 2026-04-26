@@ -166,6 +166,10 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 	expectedColumns := len(state.rowFieldTypes)
 
 	var wg sync.WaitGroup
+	var (
+		uploadErr   error
+		uploadErrMu sync.Mutex
+	)
 
 	// Error collector — drains errorsCh into the returned validationErrors slice
 	wg.Go(func() {
@@ -176,7 +180,11 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 
 	// Stage: Store — batches rows from dataCh and writes to DB
 	wg.Go(func() {
-		uploadJsonDataset(ctx, dataCh, state.tableName, state.datasetId, progressFn)
+		if err := uploadJsonDataset(ctx, dataCh, state.tableName, state.datasetId, progressFn); err != nil {
+			uploadErrMu.Lock()
+			uploadErr = err
+			uploadErrMu.Unlock()
+		}
 	})
 
 	// errWg tracks goroutines that write to errorsCh so we can
@@ -253,6 +261,9 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if uploadErr != nil {
+		return uploadErr
 	}
 
 	if len(validationErrors) > 0 {
