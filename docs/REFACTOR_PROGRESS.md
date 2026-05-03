@@ -55,6 +55,13 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### Idiomatic Go tier — Typed handler errors (done)
+- New sentinels in [service/dataset/errors.go](../internal/service/dataset/errors.go): `ErrDatasetNotFound` and `ErrInvalidParams`. `repository/dataset_upload.ErrNotFound` exposed for the soft-delete path (repo can't import service without a cycle, so it owns its own sentinel).
+- Service layer wraps repo not-found via `translateRepoErr` (matches `sql.ErrNoRows` through the repo's `%w` wrapper, otherwise passes the error through unchanged so non-found errors stay as 500).
+- All `resolve()` methods and the histogram bins-range checks now return `invalidParams("...")` (a small wrapper that prepends `ErrInvalidParams` via `%w`), so callers detect them via `errors.Is`.
+- New `writeServiceError` helper in [handler/dataset.handler.go](../internal/handler/dataset.handler.go) maps service errors to status codes: not-found → 404, invalid-params → 400 (with the underlying message), anything else → 500 with a **generic** "Internal server error" message. Underlying error is logged but never leaked to the response body, fixing a minor info-leak (raw `pq:` strings used to reach the client).
+- `VisualizeDatasetHandler`, `GetDatasetHandler`, and `DeleteDatasetHandler` all unified on `writeServiceError`. The `// Worth tightening later.` TODO comment in VisualizeDatasetHandler is gone.
+
 ### DRY tier — Bulk-insert builder unified (done)
 - New `sqlsafe.BulkInsert(exec, table, columns, rows [][]any) error` builds and executes the multi-row VALUES INSERT pattern. Validates table + column identifiers via the existing `IsValidIdentifier`. Empty `rows` is a no-op (no SQL executed). Each row's length is checked against the column count up front. Takes a minimal `interface{ Exec(string, ...any) (sql.Result, error) }` so the package stays free of higher-level dependencies. ([internal/sqlsafe/bulk_insert.go](../internal/sqlsafe/bulk_insert.go))
 - Six bespoke builders deleted, all rewritten to populate a `[][]any` and call `sqlsafe.BulkInsert`:
@@ -89,12 +96,11 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 - Two parallel repo packages (`repository/dataset` and `repository/dataset_upload`) → merge. Will let us delete the deprecated `GetDatasetRows`.
 - CSV and JSON pipelines mirror each other → unified pipeline.
 
-### Idiomatic Go tier
+### Idiomatic Go tier (remaining)
 - Logging: `fmt.Println`/`fmt.Printf` everywhere → `slog`.
 - Hand-rolled JSON in `file-upload.handler.go` and `profile.handler.go` → `json.NewEncoder`.
 - Capitalized error strings.
 - `columntype` constants are SCREAMING_SNAKE_CASE → idiomatic Go casing.
-- Typed errors so the visualize handler can distinguish 400 vs 500.
 - Doc comments on every exported symbol.
 
 ### Tests tier (zero `_test.go` files exist)

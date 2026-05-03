@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -12,6 +13,10 @@ import (
 	"github.com/telmocbarros/data-pulse/internal/models"
 	"github.com/telmocbarros/data-pulse/internal/sqlsafe"
 )
+
+// ErrNotFound is returned by mutating operations (e.g. SoftDeleteDataset)
+// when no row matched. Callers check via errors.Is.
+var ErrNotFound = errors.New("dataset not found")
 
 func StoreDataset(dbExecutor config.Executor, tableName string, datasetId string, rows []map[string]any) error {
 	if len(rows) == 0 {
@@ -150,7 +155,7 @@ func SoftDeleteDataset(id string) error {
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("dataset not found")
+		return ErrNotFound
 	}
 	return nil
 }

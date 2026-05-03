@@ -1,9 +1,6 @@
 package dataset
 
 import (
-	"errors"
-	"fmt"
-
 	"github.com/telmocbarros/data-pulse/internal/columntype"
 	"github.com/telmocbarros/data-pulse/internal/models"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
@@ -132,10 +129,10 @@ const histogramMaxBins = 200
 // Any other value triggers live recompute via Postgres WIDTH_BUCKET.
 func GetHistogram(id string, p HistogramParams) (HistogramResult, error) {
 	if p.Bins < 0 {
-		return HistogramResult{}, fmt.Errorf("bins must be >= 0, got %d", p.Bins)
+		return HistogramResult{}, invalidParams("bins must be >= 0, got %d", p.Bins)
 	}
 	if p.Bins > histogramMaxBins {
-		return HistogramResult{}, fmt.Errorf("bins must be <= %d, got %d", histogramMaxBins, p.Bins)
+		return HistogramResult{}, invalidParams("bins must be <= %d, got %d", histogramMaxBins, p.Bins)
 	}
 
 	if p.Bins == 0 {
@@ -148,7 +145,7 @@ func GetHistogram(id string, p HistogramParams) (HistogramResult, error) {
 
 	tableName, columns, err := repository.GetDatasetById(id)
 	if err != nil {
-		return HistogramResult{}, err
+		return HistogramResult{}, translateRepoErr(err)
 	}
 	numCols := columnsOfType(columns, columntype.IS_NUMERICAL)
 	buckets, err := repository.ComputeHistogramFromDataset(tableName, numCols, p.Bins)
@@ -163,7 +160,7 @@ func GetHistogram(id string, p HistogramParams) (HistogramResult, error) {
 func GetScatter(id string, p ScatterParams) (ScatterResult, error) {
 	tableName, columns, err := repository.GetDatasetById(id)
 	if err != nil {
-		return ScatterResult{}, err
+		return ScatterResult{}, translateRepoErr(err)
 	}
 	if err := p.resolve(columns); err != nil {
 		return ScatterResult{}, err
@@ -185,11 +182,11 @@ func (p *ScatterParams) resolve(columns map[string]string) error {
 
 	if p.X == "" {
 		if len(numCols) == 0 {
-			return errors.New("dataset has no numeric column for x axis")
+			return invalidParams("dataset has no numeric column for x axis")
 		}
 		p.X = numCols[0]
 	} else if columns[p.X] != columntype.IS_NUMERICAL {
-		return fmt.Errorf("x column %q is not numeric", p.X)
+		return invalidParams("x column %q is not numeric", p.X)
 	}
 
 	if p.Y == "" {
@@ -200,14 +197,14 @@ func (p *ScatterParams) resolve(columns map[string]string) error {
 			}
 		}
 		if p.Y == "" {
-			return errors.New("dataset needs at least two numeric columns for scatter")
+			return invalidParams("dataset needs at least two numeric columns for scatter")
 		}
 	} else if columns[p.Y] != columntype.IS_NUMERICAL {
-		return fmt.Errorf("y column %q is not numeric", p.Y)
+		return invalidParams("y column %q is not numeric", p.Y)
 	}
 
 	if p.X == p.Y {
-		return errors.New("x and y must be different columns")
+		return invalidParams("x and y must be different columns")
 	}
 
 	if p.Limit <= 0 {
@@ -226,7 +223,7 @@ func (p *ScatterParams) resolve(columns map[string]string) error {
 func GetTimeseries(id string, p TimeseriesParams) (TimeseriesResult, error) {
 	tableName, columns, err := repository.GetDatasetById(id)
 	if err != nil {
-		return TimeseriesResult{}, err
+		return TimeseriesResult{}, translateRepoErr(err)
 	}
 	if err := p.resolve(columns); err != nil {
 		return TimeseriesResult{}, err
@@ -259,48 +256,48 @@ func (p *TimeseriesParams) resolve(columns map[string]string) error {
 	if p.X == "" {
 		dateCols := columnsOfType(columns, columntype.IS_DATE)
 		if len(dateCols) == 0 {
-			return errors.New("dataset has no date column for x axis")
+			return invalidParams("dataset has no date column for x axis")
 		}
 		p.X = dateCols[0]
 	} else if columns[p.X] != columntype.IS_DATE {
-		return fmt.Errorf("x column %q is not a date", p.X)
+		return invalidParams("x column %q is not a date", p.X)
 	}
 
 	if len(p.Y) == 0 {
 		numCols := columnsOfType(columns, columntype.IS_NUMERICAL)
 		if len(numCols) == 0 {
-			return errors.New("dataset has no numeric column for y axis")
+			return invalidParams("dataset has no numeric column for y axis")
 		}
 		p.Y = []string{numCols[0]}
 	} else {
 		for _, y := range p.Y {
 			if columns[y] != columntype.IS_NUMERICAL {
-				return fmt.Errorf("y column %q is not numeric", y)
+				return invalidParams("y column %q is not numeric", y)
 			}
 		}
 	}
 
 	if p.Series != "" {
 		if columns[p.Series] != columntype.IS_CATEGORICAL {
-			return fmt.Errorf("series column %q is not categorical", p.Series)
+			return invalidParams("series column %q is not categorical", p.Series)
 		}
 		if p.SeriesValue == "" {
-			return errors.New("seriesValue is required when series is set")
+			return invalidParams("seriesValue is required when series is set")
 		}
 	}
 
 	if p.GroupBy != "" {
 		if _, ok := validGroupByUnits[p.GroupBy]; !ok {
-			return fmt.Errorf("groupBy must be one of day|week|month, got %q", p.GroupBy)
+			return invalidParams("groupBy must be one of day|week|month, got %q", p.GroupBy)
 		}
 		if p.Aggregate == "" {
 			p.Aggregate = "avg"
 		}
 		if _, ok := validAggregateFns[p.Aggregate]; !ok {
-			return fmt.Errorf("aggregate must be one of avg|sum|min|max|count, got %q", p.Aggregate)
+			return invalidParams("aggregate must be one of avg|sum|min|max|count, got %q", p.Aggregate)
 		}
 	} else if p.Aggregate != "" {
-		return errors.New("aggregate requires groupBy to be set")
+		return invalidParams("aggregate requires groupBy to be set")
 	}
 	return nil
 }
@@ -310,7 +307,7 @@ func (p *TimeseriesParams) resolve(columns map[string]string) error {
 func GetCorrelationMatrix(id string, _ CorrelationMatrixParams) (CorrelationMatrixResult, error) {
 	tableName, columns, err := repository.GetDatasetById(id)
 	if err != nil {
-		return CorrelationMatrixResult{}, err
+		return CorrelationMatrixResult{}, translateRepoErr(err)
 	}
 	numCols := columnsOfType(columns, columntype.IS_NUMERICAL)
 	matrix, err := repository.GetCorrelationMatrixFromDataset(id, tableName, numCols)
@@ -326,7 +323,7 @@ func GetCorrelationMatrix(id string, _ CorrelationMatrixParams) (CorrelationMatr
 func GetCategoryBreakdown(id string, p CategoryBreakdownParams) (CategoryBreakdownResult, error) {
 	tableName, columns, err := repository.GetDatasetById(id)
 	if err != nil {
-		return CategoryBreakdownResult{}, err
+		return CategoryBreakdownResult{}, translateRepoErr(err)
 	}
 	if err := p.resolve(columns); err != nil {
 		return CategoryBreakdownResult{}, err
@@ -359,19 +356,19 @@ func (p *CategoryBreakdownParams) resolve(columns map[string]string) error {
 	if p.Column == "" {
 		catCols := columnsOfType(columns, columntype.IS_CATEGORICAL)
 		if len(catCols) == 0 {
-			return errors.New("dataset has no categorical column")
+			return invalidParams("dataset has no categorical column")
 		}
 		p.Column = catCols[0]
 	} else if columns[p.Column] != columntype.IS_CATEGORICAL {
-		return fmt.Errorf("column %q is not categorical", p.Column)
+		return invalidParams("column %q is not categorical", p.Column)
 	}
 
 	if p.GroupBy != "" {
 		if columns[p.GroupBy] != columntype.IS_CATEGORICAL {
-			return fmt.Errorf("groupBy column %q is not categorical", p.GroupBy)
+			return invalidParams("groupBy column %q is not categorical", p.GroupBy)
 		}
 		if p.GroupBy == p.Column {
-			return errors.New("groupBy must differ from column")
+			return invalidParams("groupBy must differ from column")
 		}
 	}
 

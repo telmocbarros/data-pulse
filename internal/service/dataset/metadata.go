@@ -27,12 +27,12 @@ type DatasetMetadata struct {
 func GetDatasetMetadata(id string) (DatasetMetadata, error) {
 	row, err := repository.GetDatasetRowById(id)
 	if err != nil {
-		return DatasetMetadata{}, err
+		return DatasetMetadata{}, translateRepoErr(err)
 	}
 
 	_, columnTypes, err := repository.GetDatasetById(id)
 	if err != nil {
-		return DatasetMetadata{}, err
+		return DatasetMetadata{}, translateRepoErr(err)
 	}
 
 	cols := make([]DatasetColumn, 0, len(columnTypes))

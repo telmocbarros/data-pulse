@@ -12,6 +12,21 @@ import (
 	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
 )
 
+// writeServiceError maps a service-layer error to an HTTP response.
+// 404 for not-found, 400 for invalid params, 500 (with a generic message)
+// for everything else. Always logs the underlying error for diagnostics.
+func writeServiceError(w http.ResponseWriter, ctx string, err error) {
+	log.Printf("%s: %v", ctx, err)
+	switch {
+	case errors.Is(err, service.ErrDatasetNotFound), errors.Is(err, repository.ErrNotFound):
+		http.Error(w, "Dataset not found", http.StatusNotFound)
+	case errors.Is(err, service.ErrInvalidParams):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	default:
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
 // ListDatasetsHandler returns metadata for all alive datasets.
 // GET /api/datasets/
 func ListDatasetsHandler(w http.ResponseWriter, r *http.Request) {
@@ -39,8 +54,7 @@ func GetDatasetHandler(w http.ResponseWriter, r *http.Request) {
 
 	metadata, err := service.GetDatasetMetadata(id)
 	if err != nil {
-		log.Println("GetDatasetMetadata error:", err)
-		http.Error(w, "Dataset not found", http.StatusNotFound)
+		writeServiceError(w, "GetDatasetMetadata", err)
 		return
 	}
 
@@ -57,8 +71,7 @@ func DeleteDatasetHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := repository.SoftDeleteDataset(id); err != nil {
-		log.Println("SoftDeleteDataset error:", err)
-		http.Error(w, "Dataset not found", http.StatusNotFound)
+		writeServiceError(w, "SoftDeleteDataset", err)
 		return
 	}
 
@@ -160,12 +173,7 @@ func VisualizeDatasetHandler(w http.ResponseWriter, r *http.Request) {
 
 	result, err := dispatchVisualize(id, req)
 	if err != nil {
-		log.Println("Visualize error:", err)
-		// Validation errors (bad column, missing required field) come from the
-		// service layer's resolve() methods. We can't easily distinguish those
-		// from infra errors here without typed errors, so return 400 — most
-		// service errors today are caller-side. Worth tightening later.
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeServiceError(w, "Visualize", err)
 		return
 	}
 
