@@ -147,7 +147,7 @@ func GetHistogram(id string, p HistogramParams) (HistogramResult, error) {
 	if err != nil {
 		return HistogramResult{}, translateRepoErr(err)
 	}
-	numCols := columnsOfType(columns, columntype.IS_NUMERICAL)
+	numCols := columnsOfType(columns, columntype.Numerical)
 	buckets, err := repository.ComputeHistogramFromDataset(tableName, numCols, p.Bins)
 	if err != nil {
 		return HistogramResult{}, err
@@ -178,14 +178,14 @@ func GetScatter(id string, p ScatterParams) (ScatterResult, error) {
 }
 
 func (p *ScatterParams) resolve(columns map[string]string) error {
-	numCols := columnsOfType(columns, columntype.IS_NUMERICAL)
+	numCols := columnsOfType(columns, columntype.Numerical)
 
 	if p.X == "" {
 		if len(numCols) == 0 {
 			return invalidParams("dataset has no numeric column for x axis")
 		}
 		p.X = numCols[0]
-	} else if columns[p.X] != columntype.IS_NUMERICAL {
+	} else if columns[p.X] != columntype.Numerical {
 		return invalidParams("x column %q is not numeric", p.X)
 	}
 
@@ -199,7 +199,7 @@ func (p *ScatterParams) resolve(columns map[string]string) error {
 		if p.Y == "" {
 			return invalidParams("dataset needs at least two numeric columns for scatter")
 		}
-	} else if columns[p.Y] != columntype.IS_NUMERICAL {
+	} else if columns[p.Y] != columntype.Numerical {
 		return invalidParams("y column %q is not numeric", p.Y)
 	}
 
@@ -254,31 +254,31 @@ func GetTimeseries(id string, p TimeseriesParams) (TimeseriesResult, error) {
 
 func (p *TimeseriesParams) resolve(columns map[string]string) error {
 	if p.X == "" {
-		dateCols := columnsOfType(columns, columntype.IS_DATE)
+		dateCols := columnsOfType(columns, columntype.Date)
 		if len(dateCols) == 0 {
 			return invalidParams("dataset has no date column for x axis")
 		}
 		p.X = dateCols[0]
-	} else if columns[p.X] != columntype.IS_DATE {
+	} else if columns[p.X] != columntype.Date {
 		return invalidParams("x column %q is not a date", p.X)
 	}
 
 	if len(p.Y) == 0 {
-		numCols := columnsOfType(columns, columntype.IS_NUMERICAL)
+		numCols := columnsOfType(columns, columntype.Numerical)
 		if len(numCols) == 0 {
 			return invalidParams("dataset has no numeric column for y axis")
 		}
 		p.Y = []string{numCols[0]}
 	} else {
 		for _, y := range p.Y {
-			if columns[y] != columntype.IS_NUMERICAL {
+			if columns[y] != columntype.Numerical {
 				return invalidParams("y column %q is not numeric", y)
 			}
 		}
 	}
 
 	if p.Series != "" {
-		if columns[p.Series] != columntype.IS_CATEGORICAL {
+		if columns[p.Series] != columntype.Categorical {
 			return invalidParams("series column %q is not categorical", p.Series)
 		}
 		if p.SeriesValue == "" {
@@ -309,7 +309,7 @@ func GetCorrelationMatrix(id string, _ CorrelationMatrixParams) (CorrelationMatr
 	if err != nil {
 		return CorrelationMatrixResult{}, translateRepoErr(err)
 	}
-	numCols := columnsOfType(columns, columntype.IS_NUMERICAL)
+	numCols := columnsOfType(columns, columntype.Numerical)
 	matrix, err := repository.GetCorrelationMatrixFromDataset(id, tableName, numCols)
 	if err != nil {
 		return CorrelationMatrixResult{}, err
@@ -354,17 +354,17 @@ func GetCategoryBreakdown(id string, p CategoryBreakdownParams) (CategoryBreakdo
 
 func (p *CategoryBreakdownParams) resolve(columns map[string]string) error {
 	if p.Column == "" {
-		catCols := columnsOfType(columns, columntype.IS_CATEGORICAL)
+		catCols := columnsOfType(columns, columntype.Categorical)
 		if len(catCols) == 0 {
 			return invalidParams("dataset has no categorical column")
 		}
 		p.Column = catCols[0]
-	} else if columns[p.Column] != columntype.IS_CATEGORICAL {
+	} else if columns[p.Column] != columntype.Categorical {
 		return invalidParams("column %q is not categorical", p.Column)
 	}
 
 	if p.GroupBy != "" {
-		if columns[p.GroupBy] != columntype.IS_CATEGORICAL {
+		if columns[p.GroupBy] != columntype.Categorical {
 			return invalidParams("groupBy column %q is not categorical", p.GroupBy)
 		}
 		if p.GroupBy == p.Column {

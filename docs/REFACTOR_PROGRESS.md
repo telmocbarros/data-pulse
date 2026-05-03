@@ -55,6 +55,12 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### Idiomatic Go tier — columntype constants renamed (done)
+- `columntype.IS_NUMERICAL` → `columntype.Numerical` (and `IS_BOOLEAN` → `Boolean`, `IS_DATE` → `Date`, `IS_CATEGORICAL` → `Categorical`). Both the Go identifiers and the persisted string values were renamed to lowercase (`"numerical"`, `"boolean"`, `"date"`, `"categorical"`), since the user confirmed the database can be reset.
+- `mapToDatabase` switch in `repository/dataset_upload` rewritten to compare against the typed constants instead of duplicating the string literals.
+- 37 references updated. Doc-comment prose in `columntype/detect.go` rewritten to use the new names. ([internal/columntype/columntype.go](../internal/columntype/columntype.go))
+- **Heads-up:** existing `dataset_columns.column_type` rows still hold the uppercase `IS_*` strings. Reset the dev DB (drop datasets) before testing.
+
 ### Idiomatic Go tier — Typed handler errors (done)
 - New sentinels in [service/dataset/errors.go](../internal/service/dataset/errors.go): `ErrDatasetNotFound` and `ErrInvalidParams`. `repository/dataset_upload.ErrNotFound` exposed for the soft-delete path (repo can't import service without a cycle, so it owns its own sentinel).
 - Service layer wraps repo not-found via `translateRepoErr` (matches `sql.ErrNoRows` through the repo's `%w` wrapper, otherwise passes the error through unchanged so non-found errors stay as 500).
@@ -100,7 +106,6 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 - Logging: `fmt.Println`/`fmt.Printf` everywhere → `slog`.
 - Hand-rolled JSON in `file-upload.handler.go` and `profile.handler.go` → `json.NewEncoder`.
 - Capitalized error strings.
-- `columntype` constants are SCREAMING_SNAKE_CASE → idiomatic Go casing.
 - Doc comments on every exported symbol.
 
 ### Tests tier (zero `_test.go` files exist)

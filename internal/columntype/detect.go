@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// dateFormats is the ordered list of layouts we recognize as IS_DATE when
+// dateFormats is the ordered list of layouts we recognize as Date when
 // parsing strings. Order matters: longer/more-specific formats come first
 // so that e.g. "2006-01-02 15:04:05 -0700 MST" doesn't get mis-classified
 // by a shorter prefix-matching layout. (time.Parse rejects trailing input,
@@ -19,31 +19,31 @@ var dateFormats = []string{
 
 // Detect classifies a string value's type and (when classifiable to a
 // non-string type) returns its parsed Go form. The returned typename is one
-// of the package constants: IS_NUMERICAL, IS_BOOLEAN, IS_DATE, or
-// IS_CATEGORICAL. Empty input is reported as IS_CATEGORICAL with parsed = "".
+// of the package constants: Numerical, Boolean, Date, or
+// Categorical. Empty input is reported as Categorical with parsed = "".
 //
 // Recognition order: int → float → bool → date → categorical. Bool comes
 // after the numeric checks because strconv.ParseBool accepts "0" and "1".
 func Detect(value string) (typename string, parsed any) {
 	if len(value) == 0 {
-		return IS_CATEGORICAL, value
+		return Categorical, value
 	}
 
 	if i, err := strconv.ParseInt(value, 10, 64); err == nil {
-		return IS_NUMERICAL, i
+		return Numerical, i
 	}
 	if f, err := strconv.ParseFloat(value, 64); err == nil {
-		return IS_NUMERICAL, f
+		return Numerical, f
 	}
 	if b, err := strconv.ParseBool(value); err == nil {
-		return IS_BOOLEAN, b
+		return Boolean, b
 	}
 	for _, layout := range dateFormats {
 		if t, err := time.Parse(layout, value); err == nil {
-			return IS_DATE, t
+			return Date, t
 		}
 	}
-	return IS_CATEGORICAL, value
+	return Categorical, value
 }
 
 // Parse returns Detect's parsed value, discarding the typename. Equivalent to
@@ -66,12 +66,12 @@ func Classify(value string) string {
 func FromGo(val any) string {
 	switch val.(type) {
 	case time.Time:
-		return IS_DATE
+		return Date
 	case float64, float32, int, int8, int16, int32, int64:
-		return IS_NUMERICAL
+		return Numerical
 	case bool:
-		return IS_BOOLEAN
+		return Boolean
 	default:
-		return IS_CATEGORICAL
+		return Categorical
 	}
 }

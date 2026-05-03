@@ -1,8 +1,11 @@
+// Package columntype defines the type tags this codebase uses for dataset
+// columns and provides helpers to detect them from raw values.
 package columntype
 
+// Type tags. Persisted in dataset_columns.column_type and related tables.
 const (
-	IS_NUMERICAL   = "IS_NUMERICAL"
-	IS_BOOLEAN     = "IS_BOOLEAN"
-	IS_DATE        = "IS_DATE"
-	IS_CATEGORICAL = "IS_CATEGORICAL"
+	Numerical   = "numerical"
+	Boolean     = "boolean"
+	Date        = "date"
+	Categorical = "categorical"
 )

@@ -56,7 +56,7 @@ func ProfileAndStore(
 
 	numericCols := make([]string, 0, len(columnTypes))
 	for name, colType := range columnTypes {
-		if colType == columntype.IS_NUMERICAL {
+		if colType == columntype.Numerical {
 			numericCols = append(numericCols, name)
 		}
 	}
@@ -92,7 +92,7 @@ func ProfileDataset(rowCh chan map[string]any, columns map[string]string) *model
 	for colName, colType := range columns {
 		colCh := colChannels[colName]
 
-		if colType == columntype.IS_NUMERICAL {
+		if colType == columntype.Numerical {
 			n := profiler.Numeric[colName]
 			wg.Go(func() {
 				var localRows int64
@@ -171,7 +171,7 @@ func createProfiler(columns map[string]string) models.DatasetProfiler {
 	categoryProfilers := make(map[string]*models.CategoryProfiler)
 
 	for name, colType := range columns {
-		if colType == columntype.IS_NUMERICAL {
+		if colType == columntype.Numerical {
 			numericProfiler := initialiseNumericProfiler(name)
 			numericProfilers[name] = &numericProfiler
 		} else {

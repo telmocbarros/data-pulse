@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/telmocbarros/data-pulse/config"
+	"github.com/telmocbarros/data-pulse/internal/columntype"
 	"github.com/telmocbarros/data-pulse/internal/models"
 	"github.com/telmocbarros/data-pulse/internal/sqlsafe"
 )
@@ -371,13 +372,13 @@ func ListValidationErrors(datasetId string, limit int, offset int) ([]models.Val
 
 func mapToDatabase(value string) string {
 	switch value {
-	case "IS_NUMERICAL":
+	case columntype.Numerical:
 		return "DOUBLE PRECISION"
-	case "IS_BOOLEAN":
+	case columntype.Boolean:
 		return "BOOLEAN"
-	case "IS_DATE":
+	case columntype.Date:
 		return "TIMESTAMP"
-	case "IS_CATEGORICAL":
+	case columntype.Categorical:
 		return "TEXT"
 	default:
 		return "TEXT"
