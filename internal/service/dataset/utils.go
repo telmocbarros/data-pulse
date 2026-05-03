@@ -8,16 +8,12 @@ import (
 	"time"
 
 	"github.com/telmocbarros/data-pulse/internal/columntype"
+	"github.com/telmocbarros/data-pulse/internal/models"
 )
 
-type ValidationError struct {
-	Row      int32
-	Column   int32
-	Kind     string // "type_mismatch", "missing_value", "malformed_row"
-	Expected string
-	Received string
-	Detail   string
-}
+// ValidationError is an alias for models.ValidationError so pipeline code
+// can keep using the unqualified name.
+type ValidationError = models.ValidationError
 
 
 func ReadCsvRowAndExtractType(csvReader *csv.Reader) ([]string, []string, error) {

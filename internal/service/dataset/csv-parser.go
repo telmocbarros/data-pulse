@@ -267,7 +267,10 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 	}
 
 	if len(validationErrors) > 0 {
-		fmt.Printf("Completed with %d validation errors\n", len(validationErrors))
+		if err := repository.StoreValidationErrors(state.datasetId, validationErrors); err != nil {
+			// Persistence failure shouldn't fail the upload — the data is in.
+			log.Printf("store validation errors for dataset %s: %v", state.datasetId, err)
+		}
 	}
 
 	return nil

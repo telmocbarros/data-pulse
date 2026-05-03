@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
@@ -62,6 +63,73 @@ func DeleteDatasetHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// validationErrorOut is the JSON shape returned for one validation error.
+type validationErrorOut struct {
+	Row      int32  `json:"row"`
+	Column   int32  `json:"column"`
+	Kind     string `json:"kind"`
+	Expected string `json:"expected,omitempty"`
+	Received string `json:"received,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+// validationErrorsResponse pairs the page with its paging cursor.
+type validationErrorsResponse struct {
+	Limit  int                  `json:"limit"`
+	Offset int                  `json:"offset"`
+	Errors []validationErrorOut `json:"errors"`
+}
+
+// ListValidationErrorsHandler returns a page of validation errors recorded
+// during the dataset's ingestion. Query params: limit (default 50, max 500),
+// offset (default 0).
+// GET /api/datasets/{id}/validation-errors
+func ListValidationErrorsHandler(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseDatasetID(w, r)
+	if !ok {
+		return
+	}
+
+	limit := 50
+	offset := 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			offset = n
+		}
+	}
+
+	errs, err := repository.ListValidationErrors(id, limit, offset)
+	if err != nil {
+		log.Println("ListValidationErrors error:", err)
+		http.Error(w, "Error fetching validation errors", http.StatusInternalServerError)
+		return
+	}
+
+	out := make([]validationErrorOut, len(errs))
+	for i, e := range errs {
+		out[i] = validationErrorOut{
+			Row:      e.Row,
+			Column:   e.Column,
+			Kind:     e.Kind,
+			Expected: e.Expected,
+			Received: e.Received,
+			Detail:   e.Detail,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(validationErrorsResponse{
+		Limit:  limit,
+		Offset: offset,
+		Errors: out,
+	})
 }
 
 // visualizeRequest is the body shape for POST /api/datasets/{id}/visualize.

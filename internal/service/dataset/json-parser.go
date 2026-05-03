@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"sync"
 
 	"github.com/telmocbarros/data-pulse/config"
@@ -256,7 +257,9 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 	}
 
 	if len(validationErrors) > 0 {
-		fmt.Printf("Completed with %d validation errors\n", len(validationErrors))
+		if err := repository.StoreValidationErrors(state.datasetId, validationErrors); err != nil {
+			log.Printf("store validation errors for dataset %s: %v", state.datasetId, err)
+		}
 	}
 
 	return nil
