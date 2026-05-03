@@ -216,7 +216,7 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 	// Stage: Store — batches rows from dataCh and writes to DB. Returning a
 	// non-nil error here cancels gctx and unblocks the validator.
 	g.Go(func() error {
-		return uploadJsonDataset(gctx, dataCh, state.tableName, state.datasetId, progressFn)
+		return uploadDataset(gctx, dataCh, state.tableName, state.datasetId, progressFn)
 	})
 
 	// validatorExited signals the validator has stopped writing to errorsCh.
