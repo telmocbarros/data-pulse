@@ -108,7 +108,7 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			return profilerService.ProfileAndStore(datasetId, tableName, columnTypes)
+			return profilerService.ProfileAndStore(ctx, datasetId, tableName, columnTypes, progressFn)
 		})
 
 		return nil

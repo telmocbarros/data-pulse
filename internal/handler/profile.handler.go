@@ -56,7 +56,7 @@ func CreateProfileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jobmanager.Default.Submit(jobID, func(ctx context.Context, progressFn func(int)) error {
-		return profilerService.ProfileAndStore(id, tableName, columnTypes)
+		return profilerService.ProfileAndStore(ctx, id, tableName, columnTypes, progressFn)
 	})
 
 	w.Header().Set("Content-Type", "application/json")

@@ -1,6 +1,7 @@
 package profiler
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -12,26 +13,46 @@ import (
 	profilerRepo "github.com/telmocbarros/data-pulse/internal/repository/profiler"
 )
 
-// ProfileAndStore reads a dataset from the DB, profiles it, and stores the results.
-func ProfileAndStore(datasetId string, tableName string, columnTypes map[string]string) error {
-	rows, err := repository.GetDatasetRows(tableName)
-	if err != nil {
-		return fmt.Errorf("error reading dataset rows: %w", err)
-	}
+// ProfileAndStore streams the dataset's rows from the DB, profiles them,
+// and persists the results. progressFn receives stage milestones (5 → 70 →
+// 85 → 95). The job manager auto-fires 100 on success.
+//
+// Cancellation: ctx cancellation aborts the streaming query and propagates
+// through the producer/consumer pair via rowCh's close — ProfileDataset's
+// for-range exits, ProfileAndStore observes streamErr == ctx.Err(), and no
+// partial profile is persisted.
+//
+// The single-goroutine-writes/post-Wait-reads pattern around streamErr is
+// race-free without a mutex: the producer's `defer close(rowCh)` happens-
+// before ProfileDataset returns (which only happens once rowCh is closed),
+// which happens-before we read streamErr.
+func ProfileAndStore(
+	ctx context.Context,
+	datasetId string,
+	tableName string,
+	columnTypes map[string]string,
+	progressFn func(int),
+) error {
+	progressFn(5)
 
 	rowCh := make(chan map[string]any, 100)
+	var streamErr error
 	go func() {
 		defer close(rowCh)
-		for _, row := range rows {
-			rowCh <- row
-		}
+		streamErr = repository.StreamDatasetRows(ctx, tableName, rowCh)
 	}()
 
 	result := ProfileDataset(rowCh, columnTypes)
 
+	if streamErr != nil {
+		return fmt.Errorf("stream dataset rows: %w", streamErr)
+	}
+	progressFn(70)
+
 	if err := profilerRepo.StoreProfile(datasetId, result); err != nil {
 		return fmt.Errorf("error storing profile: %w", err)
 	}
+	progressFn(85)
 
 	numericCols := make([]string, 0, len(columnTypes))
 	for name, colType := range columnTypes {
@@ -42,6 +63,7 @@ func ProfileAndStore(datasetId string, tableName string, columnTypes map[string]
 	if err := profilerRepo.StoreCorrelationMatrix(datasetId, tableName, numericCols); err != nil {
 		return fmt.Errorf("error storing correlation matrix: %w", err)
 	}
+	progressFn(95)
 
 	return nil
 }

@@ -87,7 +87,7 @@ func runProfiler(datasetId string) {
 		log.Printf("Error fetching dataset for profiling: %v\n", err)
 		return
 	}
-	if err := profilerService.ProfileAndStore(datasetId, tableName, columnTypes); err != nil {
+	if err := profilerService.ProfileAndStore(context.Background(), datasetId, tableName, columnTypes, func(int) {}); err != nil {
 		log.Printf("Error profiling dataset: %v\n", err)
 		return
 	}
