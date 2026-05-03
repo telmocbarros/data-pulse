@@ -55,6 +55,11 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### Idiomatic Go tier — Hand-rolled JSON replaced (done)
+- `fmt.Fprintf(w, `{"job_id": "%s"}`, jobID)` in `file-upload.handler.go` and `profile.handler.go` replaced with `json.NewEncoder(w).Encode(jobAccepted{JobID: jobID})`. New shared `jobAccepted` type lives in [dataset.handler.go](../internal/handler/dataset.handler.go) next to `writeServiceError`.
+- `w.Write([]byte(`{"status": "cancelled"}`))` in `CancelJobHandler` switched to `json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})`.
+- All response bodies now go through `encoding/json`, so escaping of any future field values is handled correctly.
+
 ### Idiomatic Go tier — columntype constants renamed (done)
 - `columntype.IS_NUMERICAL` → `columntype.Numerical` (and `IS_BOOLEAN` → `Boolean`, `IS_DATE` → `Date`, `IS_CATEGORICAL` → `Categorical`). Both the Go identifiers and the persisted string values were renamed to lowercase (`"numerical"`, `"boolean"`, `"date"`, `"categorical"`), since the user confirmed the database can be reset.
 - `mapToDatabase` switch in `repository/dataset_upload` rewritten to compare against the typed constants instead of duplicating the string literals.
@@ -104,7 +109,6 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 
 ### Idiomatic Go tier (remaining)
 - Logging: `fmt.Println`/`fmt.Printf` everywhere → `slog`.
-- Hand-rolled JSON in `file-upload.handler.go` and `profile.handler.go` → `json.NewEncoder`.
 - Capitalized error strings.
 - Doc comments on every exported symbol.
 

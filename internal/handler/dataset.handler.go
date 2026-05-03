@@ -12,6 +12,12 @@ import (
 	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
 )
 
+// jobAccepted is the JSON shape returned by handlers that submit a
+// background job and respond 202 Accepted with the job's ID.
+type jobAccepted struct {
+	JobID string `json:"job_id"`
+}
+
 // writeServiceError maps a service-layer error to an HTTP response.
 // 404 for not-found, 400 for invalid params, 500 (with a generic message)
 // for everything else. Always logs the underlying error for diagnostics.

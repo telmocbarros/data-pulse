@@ -58,5 +58,5 @@ func CreateProfileHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	fmt.Fprintf(w, `{"job_id": "%s"}`, jobID)
+	json.NewEncoder(w).Encode(jobAccepted{JobID: jobID})
 }
