@@ -37,9 +37,12 @@ func (v VisualizationType) IsValid() bool {
 	return false
 }
 
-// HistogramParams currently has no caller-tunable fields; bin count is fixed
-// at profile time. Reserved for the future configurable-bins feature.
-type HistogramParams struct{}
+// HistogramParams selects the bin count. When Bins == 0 (or unset), the
+// cached buckets from the profiler run are returned; any other value triggers
+// live recompute against the dataset table.
+type HistogramParams struct {
+	Bins int `json:"bins"`
+}
 
 // HistogramResult is keyed by column name; each value is the bucket list for
 // that column.
@@ -47,35 +50,49 @@ type HistogramResult struct {
 	Buckets map[string][]models.HistogramBucket `json:"buckets"`
 }
 
-// ScatterParams selects the (x, y) pair and the row cap.
+// ScatterParams selects the (x, y) pair and the row cap. When Sample is true
+// the rows are drawn via TABLESAMPLE BERNOULLI rather than a head-of-table
+// LIMIT, giving a representative spread across the dataset.
 type ScatterParams struct {
-	X     string `json:"x"`
-	Y     string `json:"y"`
-	Limit int    `json:"limit"`
+	X      string `json:"x"`
+	Y      string `json:"y"`
+	Limit  int    `json:"limit"`
+	Sample bool   `json:"sample"`
 }
 
 type ScatterResult struct {
-	X    string                          `json:"x"`
-	Y    string                          `json:"y"`
-	Data []repository.ScatterPoint       `json:"data"`
+	X    string                    `json:"x"`
+	Y    string                    `json:"y"`
+	Data []repository.ScatterPoint `json:"data"`
 }
 
 // TimeseriesParams selects the time axis, one or more numeric series, and
 // optionally filters to a single value of a categorical column.
+// When GroupBy is "day", "week", or "month", x values are truncated to that
+// unit and each y is aggregated via Aggregate (default "avg").
 type TimeseriesParams struct {
 	X           string   `json:"x"`
 	Y           []string `json:"y"`
 	Series      string   `json:"series"`
 	SeriesValue string   `json:"seriesValue"`
+	GroupBy     string   `json:"groupBy"`   // "" | "day" | "week" | "month"
+	Aggregate   string   `json:"aggregate"` // "" | "avg" | "sum" | "min" | "max" | "count"
 }
 
 type TimeseriesResult struct {
-	X           string                   `json:"x"`
-	Y           []string                 `json:"y"`
-	Series      string                   `json:"series,omitempty"`
-	SeriesValue string                   `json:"seriesValue,omitempty"`
-	Data        []map[string]any         `json:"data"`
+	X           string           `json:"x"`
+	Y           []string         `json:"y"`
+	Series      string           `json:"series,omitempty"`
+	SeriesValue string           `json:"seriesValue,omitempty"`
+	GroupBy     string           `json:"groupBy,omitempty"`
+	Aggregate   string           `json:"aggregate,omitempty"`
+	Data        []map[string]any `json:"data"`
 }
+
+var (
+	validGroupByUnits  = map[string]struct{}{"day": {}, "week": {}, "month": {}}
+	validAggregateFns  = map[string]string{"avg": "AVG", "sum": "SUM", "min": "MIN", "max": "MAX", "count": "COUNT"}
+)
 
 // CorrelationMatrixParams has no caller-tunable fields today.
 type CorrelationMatrixParams struct{}
@@ -100,9 +117,33 @@ type CategoryBreakdownResult struct {
 	Data   []CategoryBreakdownCell `json:"data"`
 }
 
+const histogramMaxBins = 200
+
 // GetHistogram returns histogram buckets for every numeric column.
-func GetHistogram(id string, _ HistogramParams) (HistogramResult, error) {
-	buckets, err := repository.GetHistogramFromDataset(id, 10)
+// With Bins == 0 the cached profiler buckets are used (fast path).
+// Any other value triggers live recompute via Postgres WIDTH_BUCKET.
+func GetHistogram(id string, p HistogramParams) (HistogramResult, error) {
+	if p.Bins < 0 {
+		return HistogramResult{}, fmt.Errorf("bins must be >= 0, got %d", p.Bins)
+	}
+	if p.Bins > histogramMaxBins {
+		return HistogramResult{}, fmt.Errorf("bins must be <= %d, got %d", histogramMaxBins, p.Bins)
+	}
+
+	if p.Bins == 0 {
+		buckets, err := repository.GetHistogramFromDataset(id, 10)
+		if err != nil {
+			return HistogramResult{}, err
+		}
+		return HistogramResult{Buckets: buckets}, nil
+	}
+
+	tableName, columns, err := repository.GetDatasetById(id)
+	if err != nil {
+		return HistogramResult{}, err
+	}
+	numCols := columnsOfType(columns, columntype.IS_NUMERICAL)
+	buckets, err := repository.ComputeHistogramFromDataset(tableName, numCols, p.Bins)
 	if err != nil {
 		return HistogramResult{}, err
 	}
@@ -119,7 +160,12 @@ func GetScatter(id string, p ScatterParams) (ScatterResult, error) {
 	if err := p.resolve(columns); err != nil {
 		return ScatterResult{}, err
 	}
-	points, err := repository.GetScatterPlotFromDataset(tableName, p.X, p.Y, p.Limit)
+	var points []repository.ScatterPoint
+	if p.Sample {
+		points, err = repository.SampleScatterPlotFromDataset(tableName, p.X, p.Y, p.Limit)
+	} else {
+		points, err = repository.GetScatterPlotFromDataset(tableName, p.X, p.Y, p.Limit)
+	}
 	if err != nil {
 		return ScatterResult{}, err
 	}
@@ -167,7 +213,8 @@ func (p *ScatterParams) resolve(columns map[string]string) error {
 
 // GetTimeseries returns rows ordered by the time column, projecting each
 // requested numeric column. When Series is set, rows are filtered where
-// Series = SeriesValue.
+// Series = SeriesValue. When GroupBy is set, x is truncated to that unit and
+// each y is aggregated via Aggregate.
 func GetTimeseries(id string, p TimeseriesParams) (TimeseriesResult, error) {
 	tableName, columns, err := repository.GetDatasetById(id)
 	if err != nil {
@@ -176,7 +223,16 @@ func GetTimeseries(id string, p TimeseriesParams) (TimeseriesResult, error) {
 	if err := p.resolve(columns); err != nil {
 		return TimeseriesResult{}, err
 	}
-	points, err := repository.GetTimeseriesPlotFromDataset(tableName, p.X, p.Y, p.Series, p.SeriesValue)
+
+	var points []map[string]any
+	if p.GroupBy != "" {
+		points, err = repository.GetTimeseriesPlotGrouped(
+			tableName, p.X, p.Y, p.Series, p.SeriesValue,
+			p.GroupBy, validAggregateFns[p.Aggregate],
+		)
+	} else {
+		points, err = repository.GetTimeseriesPlotFromDataset(tableName, p.X, p.Y, p.Series, p.SeriesValue)
+	}
 	if err != nil {
 		return TimeseriesResult{}, err
 	}
@@ -185,6 +241,8 @@ func GetTimeseries(id string, p TimeseriesParams) (TimeseriesResult, error) {
 		Y:           p.Y,
 		Series:      p.Series,
 		SeriesValue: p.SeriesValue,
+		GroupBy:     p.GroupBy,
+		Aggregate:   p.Aggregate,
 		Data:        points,
 	}, nil
 }
@@ -221,6 +279,20 @@ func (p *TimeseriesParams) resolve(columns map[string]string) error {
 		if p.SeriesValue == "" {
 			return errors.New("seriesValue is required when series is set")
 		}
+	}
+
+	if p.GroupBy != "" {
+		if _, ok := validGroupByUnits[p.GroupBy]; !ok {
+			return fmt.Errorf("groupBy must be one of day|week|month, got %q", p.GroupBy)
+		}
+		if p.Aggregate == "" {
+			p.Aggregate = "avg"
+		}
+		if _, ok := validAggregateFns[p.Aggregate]; !ok {
+			return fmt.Errorf("aggregate must be one of avg|sum|min|max|count, got %q", p.Aggregate)
+		}
+	} else if p.Aggregate != "" {
+		return errors.New("aggregate requires groupBy to be set")
 	}
 	return nil
 }
