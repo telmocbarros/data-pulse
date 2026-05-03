@@ -55,6 +55,14 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### DRY tier — Bulk-insert builder unified (done)
+- New `sqlsafe.BulkInsert(exec, table, columns, rows [][]any) error` builds and executes the multi-row VALUES INSERT pattern. Validates table + column identifiers via the existing `IsValidIdentifier`. Empty `rows` is a no-op (no SQL executed). Each row's length is checked against the column count up front. Takes a minimal `interface{ Exec(string, ...any) (sql.Result, error) }` so the package stays free of higher-level dependencies. ([internal/sqlsafe/bulk_insert.go](../internal/sqlsafe/bulk_insert.go))
+- Six bespoke builders deleted, all rewritten to populate a `[][]any` and call `sqlsafe.BulkInsert`:
+  - `StoreDatasetColumns` (3 cols/row) — [repository/dataset_upload/index.go](../internal/repository/dataset_upload/index.go)
+  - `storeValidationErrorChunk` (7 cols/row) — same file
+  - `storeHistogram`, `storeNumericTypeDistribution`, `storeFrequentValues`, `storeCategoryTypeDistribution`, plus `StoreCorrelationMatrix`'s tail INSERT (3-4 cols/row each) — [repository/profiler/index.go](../internal/repository/profiler/index.go)
+- `StoreDataset`'s dynamic-column INSERT (where the column names come from the data) is left alone — its shape is structurally different and folding it in would complicate the helper.
+
 ### DRY tier — Type-detection ladder consolidated (done)
 - New `internal/columntype/detect.go` exposes:
   - `Detect(string) (typename, parsed any)` — single ladder: int → float → bool → date (4 layouts) → categorical.
@@ -78,7 +86,6 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 ## Tiers still to come (after spec gaps)
 
 ### DRY tier (remaining)
-- Bulk-insert builder copy-pasted 6 times → single helper.
 - Two parallel repo packages (`repository/dataset` and `repository/dataset_upload`) → merge. Will let us delete the deprecated `GetDatasetRows`.
 - CSV and JSON pipelines mirror each other → unified pipeline.
 

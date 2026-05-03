@@ -61,37 +61,21 @@ func storeNumericProfile(datasetId string, n *models.NumericProfiler) error {
 }
 
 func storeHistogram(profileId string, buckets []models.HistogramBucket) error {
-	var query strings.Builder
-	query.WriteString("INSERT INTO numeric_profile_histograms (numeric_profile_id, bucket_min, bucket_max, count) VALUES ")
-	vals := []any{}
+	rows := make([][]any, len(buckets))
 	for i, b := range buckets {
-		if i > 0 {
-			query.WriteString(", ")
-		}
-		query.WriteString(fmt.Sprintf("($%d, $%d, $%d, $%d)", i*4+1, i*4+2, i*4+3, i*4+4))
-		vals = append(vals, profileId, b.Min, b.Max, b.Count)
+		rows[i] = []any{profileId, b.Min, b.Max, b.Count}
 	}
-
-	_, err := config.Storage.Exec(query.String(), vals...)
-	return err
+	return sqlsafe.BulkInsert(config.Storage, "numeric_profile_histograms",
+		[]string{"numeric_profile_id", "bucket_min", "bucket_max", "count"}, rows)
 }
 
 func storeNumericTypeDistribution(profileId string, dist map[string]float64) error {
-	var query strings.Builder
-	query.WriteString("INSERT INTO numeric_profile_type_distributions (numeric_profile_id, type_name, count) VALUES ")
-	vals := []any{}
-	i := 0
+	rows := make([][]any, 0, len(dist))
 	for typeName, count := range dist {
-		if i > 0 {
-			query.WriteString(", ")
-		}
-		query.WriteString(fmt.Sprintf("($%d, $%d, $%d)", i*3+1, i*3+2, i*3+3))
-		vals = append(vals, profileId, typeName, count)
-		i++
+		rows = append(rows, []any{profileId, typeName, count})
 	}
-
-	_, err := config.Storage.Exec(query.String(), vals...)
-	return err
+	return sqlsafe.BulkInsert(config.Storage, "numeric_profile_type_distributions",
+		[]string{"numeric_profile_id", "type_name", "count"}, rows)
 }
 
 func storeCategoryProfile(datasetId string, c *models.CategoryProfiler) error {
@@ -126,39 +110,21 @@ func storeCategoryProfile(datasetId string, c *models.CategoryProfiler) error {
 }
 
 func storeFrequentValues(profileId string, values map[string]*models.Occurrence) error {
-	var query strings.Builder
-	query.WriteString("INSERT INTO category_profile_frequent_values (category_profile_id, value, count) VALUES ")
-	vals := []any{}
-	i := 0
+	rows := make([][]any, 0, len(values))
 	for _, occ := range values {
-		if i > 0 {
-			query.WriteString(", ")
-		}
-		query.WriteString(fmt.Sprintf("($%d, $%d, $%d)", i*3+1, i*3+2, i*3+3))
-		vals = append(vals, profileId, occ.Value, occ.Count)
-		i++
+		rows = append(rows, []any{profileId, occ.Value, occ.Count})
 	}
-
-	_, err := config.Storage.Exec(query.String(), vals...)
-	return err
+	return sqlsafe.BulkInsert(config.Storage, "category_profile_frequent_values",
+		[]string{"category_profile_id", "value", "count"}, rows)
 }
 
 func storeCategoryTypeDistribution(profileId string, dist map[string]float64) error {
-	var query strings.Builder
-	query.WriteString("INSERT INTO category_profile_type_distributions (category_profile_id, type_name, count) VALUES ")
-	vals := []any{}
-	i := 0
+	rows := make([][]any, 0, len(dist))
 	for typeName, count := range dist {
-		if i > 0 {
-			query.WriteString(", ")
-		}
-		query.WriteString(fmt.Sprintf("($%d, $%d, $%d)", i*3+1, i*3+2, i*3+3))
-		vals = append(vals, profileId, typeName, count)
-		i++
+		rows = append(rows, []any{profileId, typeName, count})
 	}
-
-	_, err := config.Storage.Exec(query.String(), vals...)
-	return err
+	return sqlsafe.BulkInsert(config.Storage, "category_profile_type_distributions",
+		[]string{"category_profile_id", "type_name", "count"}, rows)
 }
 
 // GetProfile retrieves a stored DatasetProfiler from the database.
@@ -468,17 +434,12 @@ func StoreCorrelationMatrix(datasetId string, tableName string, numericColumns [
 		return fmt.Errorf("clear existing correlation rows: %w", err)
 	}
 
-	var query strings.Builder
-	query.WriteString("INSERT INTO correlation_matrices (dataset_id, column_a, column_b, pearson_r) VALUES ")
-	vals := []any{}
+	rows := make([][]any, len(pairs))
 	for i, p := range pairs {
-		if i > 0 {
-			query.WriteString(", ")
-		}
-		query.WriteString(fmt.Sprintf("($%d, $%d, $%d, $%d)", i*4+1, i*4+2, i*4+3, i*4+4))
-		vals = append(vals, datasetId, p.ColumnA, p.ColumnB, p.PearsonR)
+		rows[i] = []any{datasetId, p.ColumnA, p.ColumnB, p.PearsonR}
 	}
-	if _, err := config.Storage.Exec(query.String(), vals...); err != nil {
+	if err := sqlsafe.BulkInsert(config.Storage, "correlation_matrices",
+		[]string{"dataset_id", "column_a", "column_b", "pearson_r"}, rows); err != nil {
 		return fmt.Errorf("insert correlation rows: %w", err)
 	}
 	return nil

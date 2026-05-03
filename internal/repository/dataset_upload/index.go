@@ -123,19 +123,12 @@ func StoreDatasetMetadata(metadata map[string]any) (string, error) {
 }
 
 func StoreDatasetColumns(columns [][]string, datasetId string) error {
-	var query strings.Builder
-	query.WriteString("INSERT INTO dataset_columns (dataset_id, column_name, column_type) VALUES ")
-	vals := []any{}
+	rows := make([][]any, len(columns))
 	for i, col := range columns {
-		if i > 0 {
-			query.WriteString(", ")
-		}
-		query.WriteString(fmt.Sprintf("($%d, $%d, $%d)", i*3+1, i*3+2, i*3+3))
-		vals = append(vals, datasetId, col[0], col[1])
+		rows[i] = []any{datasetId, col[0], col[1]}
 	}
-
-	_, err := config.Storage.Exec(query.String(), vals...)
-	if err != nil {
+	if err := sqlsafe.BulkInsert(config.Storage, "dataset_columns",
+		[]string{"dataset_id", "column_name", "column_type"}, rows); err != nil {
 		fmt.Println("unable to insert dataset columns", err)
 		return err
 	}
@@ -326,20 +319,13 @@ func StoreValidationErrors(datasetId string, errs []models.ValidationError) erro
 }
 
 func storeValidationErrorChunk(datasetId string, chunk []models.ValidationError) error {
-	var query strings.Builder
-	query.WriteString("INSERT INTO dataset_validation_errors (dataset_id, row_number, column_index, kind, expected, received, detail) VALUES ")
-	vals := make([]any, 0, len(chunk)*7)
+	rows := make([][]any, len(chunk))
 	for i, e := range chunk {
-		if i > 0 {
-			query.WriteString(", ")
-		}
-		base := i * 7
-		fmt.Fprintf(&query, "($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6, base+7)
-		vals = append(vals, datasetId, e.Row, e.Column, e.Kind, e.Expected, e.Received, e.Detail)
+		rows[i] = []any{datasetId, e.Row, e.Column, e.Kind, e.Expected, e.Received, e.Detail}
 	}
-	_, err := config.Storage.Exec(query.String(), vals...)
-	return err
+	return sqlsafe.BulkInsert(config.Storage, "dataset_validation_errors",
+		[]string{"dataset_id", "row_number", "column_index", "kind", "expected", "received", "detail"},
+		rows)
 }
 
 // ListValidationErrors returns a page of validation errors for the dataset,
