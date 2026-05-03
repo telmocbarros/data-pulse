@@ -173,6 +173,67 @@ func SampleScatterPlotFromDataset(tableName string, xColumn string, yColumn stri
 	return out, nil
 }
 
+// CategoryBreakdownGroupedCell is one (value, group, count) row for a 2D
+// category breakdown.
+type CategoryBreakdownGroupedCell struct {
+	Value string
+	Group string
+	Count int64
+}
+
+// GetCategoryBreakdownGrouped returns a 2D breakdown: the top `limit` values
+// of column, each split by groupColumn. Limit caps the number of top-level
+// values, not the total returned rows. Output is ordered by top-level total
+// desc, then column value, then per-group count desc, then group value.
+// All three identifiers must already be validated as categorical by the
+// caller; this function additionally validates them as safe SQL identifiers.
+func GetCategoryBreakdownGrouped(tableName string, column string, groupColumn string, limit int) ([]CategoryBreakdownGroupedCell, error) {
+	if !sqlsafe.IsValidIdentifier(tableName) {
+		return nil, fmt.Errorf("invalid table name: %q", tableName)
+	}
+	if !sqlsafe.IsValidIdentifier(column) {
+		return nil, fmt.Errorf("invalid column: %q", column)
+	}
+	if !sqlsafe.IsValidIdentifier(groupColumn) {
+		return nil, fmt.Errorf("invalid group column: %q", groupColumn)
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("limit must be > 0, got %d", limit)
+	}
+
+	query := fmt.Sprintf(
+		`WITH top_values AS (
+			SELECT %[1]s AS v, COUNT(*) AS total
+			FROM %[3]s
+			WHERE %[1]s IS NOT NULL
+			GROUP BY %[1]s
+			ORDER BY total DESC, v
+			LIMIT $1
+		)
+		SELECT t.v, COALESCE(x.%[2]s::text, ''), COUNT(*)
+		FROM %[3]s x
+		JOIN top_values t ON x.%[1]s = t.v
+		GROUP BY t.v, t.total, x.%[2]s
+		ORDER BY t.total DESC, t.v, COUNT(*) DESC, x.%[2]s`,
+		column, groupColumn, tableName,
+	)
+	rows, err := config.Storage.Query(query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("category breakdown grouped query: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]CategoryBreakdownGroupedCell, 0)
+	for rows.Next() {
+		var c CategoryBreakdownGroupedCell
+		if err := rows.Scan(&c.Value, &c.Group, &c.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
 // GetHistogramFromDataset returns histogram buckets keyed by column name for
 // every numeric profile attached to the dataset. numBuckets is currently
 // ignored — bucket count is fixed at profiling time.

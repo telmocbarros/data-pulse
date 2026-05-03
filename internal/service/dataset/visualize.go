@@ -102,19 +102,27 @@ type CorrelationMatrixResult struct {
 }
 
 // CategoryBreakdownParams selects the categorical column and the row cap.
+// When GroupBy names a second categorical column, the breakdown is 2D:
+// each top-level value is split by its GroupBy value, and Limit caps the
+// number of top-level values (not total rows).
 type CategoryBreakdownParams struct {
-	Column string `json:"column"`
-	Limit  int    `json:"limit"`
+	Column  string `json:"column"`
+	GroupBy string `json:"groupBy"`
+	Limit   int    `json:"limit"`
 }
 
+// CategoryBreakdownCell is a single value/count pair. For 2D breakdowns the
+// Group field carries the GroupBy column's value for that row.
 type CategoryBreakdownCell struct {
 	Value string `json:"value"`
+	Group string `json:"group,omitempty"`
 	Count int64  `json:"count"`
 }
 
 type CategoryBreakdownResult struct {
-	Column string                  `json:"column"`
-	Data   []CategoryBreakdownCell `json:"data"`
+	Column  string                  `json:"column"`
+	GroupBy string                  `json:"groupBy,omitempty"`
+	Data    []CategoryBreakdownCell `json:"data"`
 }
 
 const histogramMaxBins = 200
@@ -313,15 +321,29 @@ func GetCorrelationMatrix(id string, _ CorrelationMatrixParams) (CorrelationMatr
 }
 
 // GetCategoryBreakdown returns the most-frequent values for the chosen
-// categorical column, capped at Limit.
+// categorical column, capped at Limit. When GroupBy is set, each value is
+// split by the GroupBy column via a live SQL aggregate (no profiler cache).
 func GetCategoryBreakdown(id string, p CategoryBreakdownParams) (CategoryBreakdownResult, error) {
-	_, columns, err := repository.GetDatasetById(id)
+	tableName, columns, err := repository.GetDatasetById(id)
 	if err != nil {
 		return CategoryBreakdownResult{}, err
 	}
 	if err := p.resolve(columns); err != nil {
 		return CategoryBreakdownResult{}, err
 	}
+
+	if p.GroupBy != "" {
+		cells, err := repository.GetCategoryBreakdownGrouped(tableName, p.Column, p.GroupBy, p.Limit)
+		if err != nil {
+			return CategoryBreakdownResult{}, err
+		}
+		data := make([]CategoryBreakdownCell, len(cells))
+		for i, c := range cells {
+			data[i] = CategoryBreakdownCell{Value: c.Value, Group: c.Group, Count: c.Count}
+		}
+		return CategoryBreakdownResult{Column: p.Column, GroupBy: p.GroupBy, Data: data}, nil
+	}
+
 	occurrences, err := profilerRepo.GetCategoryBreakdown(id, p.Column, p.Limit)
 	if err != nil {
 		return CategoryBreakdownResult{}, err
@@ -342,6 +364,15 @@ func (p *CategoryBreakdownParams) resolve(columns map[string]string) error {
 		p.Column = catCols[0]
 	} else if columns[p.Column] != columntype.IS_CATEGORICAL {
 		return fmt.Errorf("column %q is not categorical", p.Column)
+	}
+
+	if p.GroupBy != "" {
+		if columns[p.GroupBy] != columntype.IS_CATEGORICAL {
+			return fmt.Errorf("groupBy column %q is not categorical", p.GroupBy)
+		}
+		if p.GroupBy == p.Column {
+			return errors.New("groupBy must differ from column")
+		}
 	}
 
 	if p.Limit <= 0 {
