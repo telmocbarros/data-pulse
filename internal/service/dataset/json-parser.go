@@ -8,6 +8,7 @@ import (
 	"log"
 
 	"github.com/telmocbarros/data-pulse/config"
+	"github.com/telmocbarros/data-pulse/internal/columntype"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 	"golang.org/x/sync/errgroup"
 )
@@ -76,11 +77,7 @@ func parseJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize i
 	}
 	columnTypes := make(map[string]string, len(firstRow))
 	for k, v := range firstRow {
-		varType, err := ComputeVariableType(fmt.Sprintf("%v", v))
-		if err != nil {
-			return nil, fmt.Errorf("error detecting type for column %q: %w", k, err)
-		}
-		columnTypes[k] = varType
+		columnTypes[k] = columntype.FromGo(v)
 	}
 
 	datasetColumns := extractColumns(firstRow)
@@ -238,10 +235,7 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 					}
 					continue
 				}
-				varType, err := ComputeVariableType(fmt.Sprintf("%v", v))
-				if err != nil {
-					return fmt.Errorf("compute variable type for column %q: %w", k, err)
-				}
+				varType := columntype.FromGo(v)
 				if varType != state.columnTypes[k] {
 					select {
 					case state.errorsCh <- ValidationError{

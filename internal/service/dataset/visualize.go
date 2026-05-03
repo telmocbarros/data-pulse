@@ -90,8 +90,8 @@ type TimeseriesResult struct {
 }
 
 var (
-	validGroupByUnits  = map[string]struct{}{"day": {}, "week": {}, "month": {}}
-	validAggregateFns  = map[string]string{"avg": "AVG", "sum": "SUM", "min": "MIN", "max": "MAX", "count": "COUNT"}
+	validGroupByUnits = map[string]struct{}{"day": {}, "week": {}, "month": {}}
+	validAggregateFns = map[string]string{"avg": "AVG", "sum": "SUM", "min": "MIN", "max": "MAX", "count": "COUNT"}
 )
 
 // CorrelationMatrixParams has no caller-tunable fields today.

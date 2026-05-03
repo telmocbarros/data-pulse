@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 
+	"github.com/telmocbarros/data-pulse/internal/columntype"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 	"golang.org/x/sync/errgroup"
 )
@@ -70,7 +71,7 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 
 	// 3. Parsing the values of the first row
 	for idx, value := range content {
-		jsonObj[headers[idx]] = ParseValue(value)
+		jsonObj[headers[idx]] = columntype.Parse(value)
 	}
 
 	log.Println("Column Types: ", row_field_types)
@@ -262,10 +263,7 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 				}
 
 				if idx < expectedColumns {
-					variableType, err := ComputeVariableType(value)
-					if err != nil {
-						return fmt.Errorf("compute variable type: %w", err)
-					}
+					variableType := columntype.Classify(value)
 					if state.rowFieldTypes[idx] != variableType {
 						select {
 						case state.errorsCh <- ValidationError{
@@ -280,7 +278,7 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 						}
 					}
 				}
-				jsonResult[state.headers[idx]] = ParseValue(value)
+				jsonResult[state.headers[idx]] = columntype.Parse(value)
 			}
 
 			select {

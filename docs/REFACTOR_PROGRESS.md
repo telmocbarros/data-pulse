@@ -55,6 +55,16 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### DRY tier — Type-detection ladder consolidated (done)
+- New `internal/columntype/detect.go` exposes:
+  - `Detect(string) (typename, parsed any)` — single ladder: int → float → bool → date (4 layouts) → categorical.
+  - `Parse(string) any` — wraps Detect, returns parsed value only (legacy `ParseValue` semantics).
+  - `Classify(string) string` — wraps Detect, returns typename only (legacy `ComputeVariableType` semantics, minus the always-nil error).
+  - `FromGo(any) string` — runtime-type switch for already-typed Go values; replaces `service/dataset.goTypeToDBType` and the `Classify(fmt.Sprintf("%v", v))` round-trip in json-parser.go.
+- `dateFormats` covers all four layouts the old code accepted, including `2006-01-02 15:04:05 -0700 MST` (the format `time.Time` produces via `fmt.Sprintf("%v")`) and the UTC variant.
+- Deleted `service/dataset.ParseValue`, `ComputeVariableType`, and `goTypeToDBType`. All callers (csv-parser, json-parser, utils, index) now use `columntype.{Parse,Classify,FromGo}` directly. Dropped the dead `if err != nil` branch from validators (the old `ComputeVariableType` had a `(string, error)` signature where the error was always nil).
+- Net: one ladder instead of three (the two string ladders + the runtime-type switch). ([internal/columntype/detect.go](../internal/columntype/detect.go))
+
 ### DRY tier — Path ID parsing unified (done)
 - Renamed `parseDatasetID` → `parseUUIDPath` (it was already generic — reads `r.PathValue("id")`, validates as UUID, writes 400 on failure). All ID-bearing handlers now use it.
 - `profile.handler.go` switched from `extractDatasetId(r.URL.Path)` (manual `TrimPrefix`/`TrimSuffix`/`Contains` dance, no UUID validation) to `parseUUIDPath`. Old helper deleted.
@@ -69,7 +79,6 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 
 ### DRY tier (remaining)
 - Bulk-insert builder copy-pasted 6 times → single helper.
-- Type-detection ladder duplicated → consolidate in `internal/columntype`.
 - Two parallel repo packages (`repository/dataset` and `repository/dataset_upload`) → merge. Will let us delete the deprecated `GetDatasetRows`.
 - CSV and JSON pipelines mirror each other → unified pipeline.
 
@@ -83,7 +92,7 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 
 ### Tests tier (zero `_test.go` files exist)
 Highest-value targets per the review:
-1. `service/dataset/utils.go` — `ParseValue`, `ComputeVariableType`.
+1. `internal/columntype` — `Detect`, `Parse`, `Classify`, `FromGo` (pure functions, easy to table-test).
 2. `service/profiler` — `percentile`, `finaliseNumeric`, `toFloat64`.
 3. `service/dataset/visualize.go` — all `(*Params).resolve` methods (pure now, easy to table-test).
 4. `internal/sqlsafe` — positive/negative table for the regex.
