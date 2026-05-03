@@ -55,6 +55,14 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### Tests tier — Pure-function targets (done: 4 of 5)
+- [internal/columntype/detect_test.go](../internal/columntype/detect_test.go) — table tests for `Detect`, `Parse`, `Classify`, `FromGo`. Covers each branch of the recognition ladder including the "0 and 1 stay numeric" precedence over bool, and verifies the parsed-value Go types.
+- [internal/sqlsafe/identifier_test.go](../internal/sqlsafe/identifier_test.go) — positive/negative table for `IsValidIdentifier` (regex), including all the SQL-injection-shape strings the regex needs to reject.
+- [internal/sqlsafe/bulk_insert_test.go](../internal/sqlsafe/bulk_insert_test.go) — uses a stub `execer` to test `BulkInsert`'s pre-DB validation (empty rows no-op, bad identifiers, empty columns, row-length mismatch) and verifies the generated query string and arg flattening end-to-end without touching Postgres.
+- [internal/service/profiler/profiler_test.go](../internal/service/profiler/profiler_test.go) — `percentile` (empty, singleton, exact-index, interpolated), `toFloat64` (every accepted/rejected input type), `finaliseNumeric` (no-count short-circuit, all-same-value single-bucket fast path, full 1..10 dataset with histogram-totals invariant).
+- [internal/service/dataset/visualize_test.go](../internal/service/dataset/visualize_test.go) — every `(*Params).resolve` method tested via `errors.Is(err, ErrInvalidParams)`, covering defaults, limit clamping, type rejection, mutually-exclusive constraints (X==Y, GroupBy==Column), and the GroupBy/Aggregate dependency rules.
+- **Remaining target:** CSV/JSON pipeline integration test with a known-bad fixture. Needs DB stubs or a test container; deferred to its own session.
+
 ### Idiomatic Go tier — Error strings + doc comments (done)
 - All `fmt.Errorf("error <verb>: %w", err)` patterns trimmed to `fmt.Errorf("<verb>: %w", err)` — the wrapper is already an error so the redundant prefix only adds noise to nested traces.
 - `BulkInsert` validation errors lowercased (Go convention: error strings start lowercase).
@@ -124,13 +132,8 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 
 _Idiomatic Go tier complete._
 
-### Tests tier (zero `_test.go` files exist)
-Highest-value targets per the review:
-1. `internal/columntype` — `Detect`, `Parse`, `Classify`, `FromGo` (pure functions, easy to table-test).
-2. `service/profiler` — `percentile`, `finaliseNumeric`, `toFloat64`.
-3. `service/dataset/visualize.go` — all `(*Params).resolve` methods (pure now, easy to table-test).
-4. `internal/sqlsafe` — positive/negative table for the regex.
-5. CSV/JSON pipeline integration with a known-bad fixture.
+### Tests tier (remaining)
+- CSV/JSON pipeline integration with a known-bad fixture (needs DB stubs or a test container; deferred to its own session).
 
 ## Verification status
 
