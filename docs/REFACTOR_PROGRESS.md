@@ -55,6 +55,16 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### DRY tier — CSV/JSON pipelines unified (done)
+- New `internal/service/dataset/pipeline.go` owns the generic orchestrator: `RowSource[T]` and `RowValidator[T]` interfaces, the `numbered[T]` row wrapper, `runPipeline[T]` (errgroup + cancellation + propagation watcher + closer goroutine + best-effort `StoreValidationErrors`), and `uploadDataset` (renamed from the misleading `uploadJsonDataset`).
+- `csv-parser.go` and `json-parser.go` deleted entirely. Replaced by `csv.go` and `json.go`, each containing a small `Source` + `Validator` adapter and the matching `ProcessXFile` entry point. Format-specific code is just the parsing primitive (`csv.Reader.Read` vs `json.Decoder.Decode`), the validation iteration (by index vs by key), and JSON's `firstRow` pre-send. Everything else (the ~90-line errgroup/cancellation skeleton that used to be duplicated line-for-line) lives once in `runPipeline`.
+- Net diff: 5 commits, -121 lines on the JSON cutover, -111 lines on the CSV cutover, +198 lines for the orchestrator. Total ~120 fewer lines across the package, single source of truth for pipeline scaffolding.
+- **Bug-for-bug preservation called out explicitly:**
+  - CSV column-overflow panic — when a row has more cells than the header, `v.headers[idx]` panics in `csvValidator.Validate`. Today's `csvSource` emits `malformed_row` for the count mismatch but still forwards the row. Marked `FIXME(csv-overflow)` on the validator for a separate follow-up commit.
+  - CSV row-number mislabeling — the original `csv-parser.go` initialized `rowNumber=2` for what was actually the third file row (the comment "row 1 was used for type extraction" was wrong: header was row 1, type extraction consumed row 2). `csvSource.rowNumber` is initialized to 2 with use-then-increment to match.
+  - Sparse output maps from CSV missing-cell handling and JSON missing-key handling preserved.
+- 5 commits to keep build green at every step (move uploadDataset → add orchestrator → JSON cutover → CSV cutover → doc).
+
 ### DRY tier — Repository packages merged (done)
 - `internal/repository/dataset_upload/` deleted entirely. Its symbols (`StoreDataset`, `CreateDatasetTable`, `StoreDatasetMetadata`, `StoreDatasetColumns`, `SoftDeleteDataset`, `ListDatasets`, `StreamDatasetRows`, `StoreRawFile`, `StoreValidationErrors`, `ListValidationErrors`, `ErrNotFound`, `mapToDatabase`, `validationErrorBatchSize`, `storeValidationErrorChunk`) plus `dataset/index.go`'s symbols all live under one `package dataset` at `internal/repository/dataset/`.
 - The merged package is split by concern across 8 files: `errors.go`, `lifecycle.go`, `schema.go`, `metadata.go`, `stream.go`, `files.go`, `validation_errors.go`, `analytics.go`. ~100-300 lines each.
@@ -133,8 +143,10 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 
 ## Tiers still to come (after spec gaps)
 
-### DRY tier (remaining)
-- CSV and JSON pipelines mirror each other → unified pipeline.
+_DRY tier complete._
+
+### Open follow-ups (not blocking any tier)
+- **`FIXME(csv-overflow)`** in [csv.go](../internal/service/dataset/csv.go) on `csvValidator`. Pre-existing latent panic preserved bug-for-bug by the unification commit. Fix: either skip the row in `csvSource.Next` on column-count mismatch, or clamp `idx < len(v.headers)` in `csvValidator.Validate`. Worth a small dedicated commit + test.
 
 _Idiomatic Go tier complete._
 
