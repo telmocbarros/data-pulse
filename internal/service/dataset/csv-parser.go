@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"sync"
 
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	"golang.org/x/sync/errgroup"
 )
 
 type numberedRecord struct {
@@ -16,10 +16,19 @@ type numberedRecord struct {
 	Record []string
 }
 
-// csvPipelineState holds everything Stages 2+3 need after the file has been fully parsed.
+// csvPipelineState holds everything Stages 2+3 need after the file has been
+// fully parsed. ctx is a cancellable child of the caller's context shared by
+// the parser goroutine (already running) and the validator/storage goroutines
+// started in runCsvPipeline. cancel is invoked by runCsvPipeline on its way
+// out so the parser unblocks if it's still mid-send when the pipeline exits.
+// parserExited is closed by the parser goroutine when it stops, so the
+// pipeline knows when it's safe to close errorsCh.
 type csvPipelineState struct {
+	ctx           context.Context
+	cancel        context.CancelFunc
 	parserCh      chan numberedRecord
 	errorsCh      chan ValidationError
+	parserExited  chan struct{}
 	headers       []string
 	rowFieldTypes []string
 	tableName     string
@@ -93,18 +102,23 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 		return nil, fmt.Errorf("error adding dataset columns: %w", err)
 	}
 
-	// 5. Stage 1: Parse — read raw CSV rows and send them downstream
+	// 5. Stage 1: Parse — read raw CSV rows and send them downstream.
+	// pipelineCtx is cancellable so a downstream failure (e.g. storage error)
+	// can unblock the parser if it's mid-send.
+	pipelineCtx, cancel := context.WithCancel(ctx)
 	errorsCh := make(chan ValidationError, 100)
 	parserCh := make(chan numberedRecord, 100)
+	parserExited := make(chan struct{})
 	expectedColumns := len(row_field_types)
 
 	go func() {
+		defer close(parserExited)
 		defer close(parserCh)
 
 		rowNumber := int32(2) // row 1 was used for type extraction
 		for {
 			select {
-			case <-ctx.Done():
+			case <-pipelineCtx.Done():
 				return
 			default:
 			}
@@ -121,7 +135,7 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 					Kind:   "malformed_row",
 					Detail: err.Error(),
 				}:
-				case <-ctx.Done():
+				case <-pipelineCtx.Done():
 					return
 				}
 				rowNumber++
@@ -137,19 +151,26 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 					Expected: fmt.Sprintf("%d columns", expectedColumns),
 					Received: fmt.Sprintf("%d columns", len(record)),
 				}:
-				case <-ctx.Done():
+				case <-pipelineCtx.Done():
 					return
 				}
 			}
 
-			parserCh <- numberedRecord{Row: rowNumber, Record: record}
+			select {
+			case parserCh <- numberedRecord{Row: rowNumber, Record: record}:
+			case <-pipelineCtx.Done():
+				return
+			}
 			rowNumber++
 		}
 	}()
 
 	return &csvPipelineState{
+		ctx:           pipelineCtx,
+		cancel:        cancel,
 		parserCh:      parserCh,
 		errorsCh:      errorsCh,
+		parserExited:  parserExited,
 		headers:       headers,
 		rowFieldTypes: row_field_types,
 		tableName:     tableName,
@@ -159,54 +180,74 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 
 // runCsvPipeline runs Stages 2 (validate) and 3 (store) of the CSV pipeline.
 // It does not need the file — it consumes from the channels in csvPipelineState.
+//
+// Cancellation: g, gctx := errgroup.WithContext(state.ctx). If the storage
+// goroutine returns an error, gctx is cancelled; the validator's <-gctx.Done()
+// branches fire and it returns, closing dataCh. defer state.cancel() at the
+// top guarantees the parser goroutine — which only watches state.ctx — also
+// unblocks, since state.ctx is gctx's parent.
 func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn func(int)) error {
+	defer state.cancel()
+
+	// Only the error-collector writes validationErrors, and we read it after
+	// g.Wait() returns (collector has exited by then), so no mutex needed.
 	var validationErrors []ValidationError
 
 	dataCh := make(chan map[string]any, 100)
 	expectedColumns := len(state.rowFieldTypes)
 
-	var wg sync.WaitGroup
-	var (
-		uploadErr   error
-		uploadErrMu sync.Mutex
-	)
+	g, gctx := errgroup.WithContext(state.ctx)
 
-	// Error collector — drains errorsCh into the returned validationErrors slice
-	wg.Go(func() {
+	// Propagate gctx cancellation back to state.ctx so the parser goroutine
+	// (which only watches state.ctx) unblocks when any pipeline stage errors.
+	// state.ctx is gctx's parent, so it isn't cancelled automatically.
+	go func() {
+		<-gctx.Done()
+		state.cancel()
+	}()
+
+	// Error collector — drains errorsCh into validationErrors. Never fails;
+	// errorsCh is closed once both producers (parser + validator) finish.
+	g.Go(func() error {
 		for ve := range state.errorsCh {
 			validationErrors = append(validationErrors, ve)
 		}
+		return nil
 	})
 
-	// Stage: Store — batches rows from dataCh and writes to DB
-	wg.Go(func() {
-		if err := uploadJsonDataset(ctx, dataCh, state.tableName, state.datasetId, progressFn); err != nil {
-			uploadErrMu.Lock()
-			uploadErr = err
-			uploadErrMu.Unlock()
-		}
+	// Stage: Store — batches rows from dataCh and writes to DB. Returning a
+	// non-nil error here cancels gctx and unblocks the validator.
+	g.Go(func() error {
+		return uploadJsonDataset(gctx, dataCh, state.tableName, state.datasetId, progressFn)
 	})
 
-	// errWg tracks goroutines that write to errorsCh so we can
-	// close it safely after both the parser and validator finish.
-	var errWg sync.WaitGroup
+	// validatorExited signals the validator has stopped writing to errorsCh.
+	// Combined with state.parserExited (closed by the parser on its way out),
+	// these two are the signal that no one will write to errorsCh again, so
+	// it's safe to close. The closer goroutine waits for both before closing.
+	validatorExited := make(chan struct{})
+	go func() {
+		<-state.parserExited
+		<-validatorExited
+		close(state.errorsCh)
+	}()
 
-	// Stage: Validate — check types and missing values, forward valid rows to dataCh
-	errWg.Go(func() {
+	// Stage: Validate — check types and missing values, forward valid rows to dataCh.
+	g.Go(func() error {
 		defer close(dataCh)
+		defer close(validatorExited)
 
 		progressFn(30)
 
 		for nr := range state.parserCh {
 			select {
-			case <-ctx.Done():
-				return
+			case <-gctx.Done():
+				return gctx.Err()
 			default:
 			}
 
 			jsonResult := make(map[string]any)
 			for idx, value := range nr.Record {
-
 				if value == "" {
 					select {
 					case state.errorsCh <- ValidationError{
@@ -214,8 +255,8 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 						Column: int32(idx),
 						Kind:   "missing_value",
 					}:
-					case <-ctx.Done():
-						return
+					case <-gctx.Done():
+						return gctx.Err()
 					}
 					continue
 				}
@@ -223,8 +264,7 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 				if idx < expectedColumns {
 					variableType, err := ComputeVariableType(value)
 					if err != nil {
-						fmt.Println("Error retrieving cell variable type: ", err)
-						return
+						return fmt.Errorf("compute variable type: %w", err)
 					}
 					if state.rowFieldTypes[idx] != variableType {
 						select {
@@ -235,8 +275,8 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 							Expected: state.rowFieldTypes[idx],
 							Received: variableType,
 						}:
-						case <-ctx.Done():
-							return
+						case <-gctx.Done():
+							return gctx.Err()
 						}
 					}
 				}
@@ -245,25 +285,18 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 
 			select {
 			case dataCh <- jsonResult:
-			case <-ctx.Done():
-				return
+			case <-gctx.Done():
+				return gctx.Err()
 			}
 		}
+		return nil
 	})
 
-	// Close errorsCh once both producers (parser + validator) are done
-	go func() {
-		errWg.Wait()
-		close(state.errorsCh)
-	}()
-
-	wg.Wait()
-
+	if err := g.Wait(); err != nil {
+		return err
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
-	}
-	if uploadErr != nil {
-		return uploadErr
 	}
 
 	if len(validationErrors) > 0 {

@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"sync"
 
 	"github.com/telmocbarros/data-pulse/config"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	"golang.org/x/sync/errgroup"
 )
 
 type numberedJsonRow struct {
@@ -17,14 +17,19 @@ type numberedJsonRow struct {
 	Data map[string]any
 }
 
+// jsonPipelineState mirrors csvPipelineState; see that struct's doc for the
+// cancellation contract (ctx/cancel/parserExited).
 type jsonPipelineState struct {
-	parserCh    chan numberedJsonRow
-	errorsCh    chan ValidationError
-	columnKeys  []string
-	columnTypes map[string]string
-	tableName   string
-	datasetId   string
-	firstRow    map[string]any
+	ctx          context.Context
+	cancel       context.CancelFunc
+	parserCh     chan numberedJsonRow
+	errorsCh     chan ValidationError
+	parserExited chan struct{}
+	columnKeys   []string
+	columnTypes  map[string]string
+	tableName    string
+	datasetId    string
+	firstRow     map[string]any
 }
 
 // ProcessJsonFile runs the full JSON pipeline synchronously.
@@ -103,17 +108,22 @@ func parseJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize i
 		return nil, fmt.Errorf("error adding dataset columns: %w", err)
 	}
 
-	// 3. Stage 1: Parse — decode JSON objects and send them downstream
+	// 3. Stage 1: Parse — decode JSON objects and send them downstream.
+	// pipelineCtx is cancellable so a downstream failure (e.g. storage error)
+	// can unblock the parser if it's mid-send.
+	pipelineCtx, cancel := context.WithCancel(ctx)
 	errorsCh := make(chan ValidationError, 100)
 	parserCh := make(chan numberedJsonRow, 100)
+	parserExited := make(chan struct{})
 
 	go func() {
+		defer close(parserExited)
 		defer close(parserCh)
 
 		rowNumber := int32(1) // row 0 was used for type extraction
 		for decoder.More() {
 			select {
-			case <-ctx.Done():
+			case <-pipelineCtx.Done():
 				return
 			default:
 			}
@@ -127,7 +137,7 @@ func parseJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize i
 					Kind:   "malformed_row",
 					Detail: err.Error(),
 				}:
-				case <-ctx.Done():
+				case <-pipelineCtx.Done():
 					return
 				}
 				rowNumber++
@@ -135,65 +145,81 @@ func parseJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize i
 			}
 
 			ReadJsonRowAndExtractType(row)
-			parserCh <- numberedJsonRow{Row: rowNumber, Data: row}
+			select {
+			case parserCh <- numberedJsonRow{Row: rowNumber, Data: row}:
+			case <-pipelineCtx.Done():
+				return
+			}
 			rowNumber++
 		}
 	}()
 
 	return &jsonPipelineState{
-		parserCh:    parserCh,
-		errorsCh:    errorsCh,
-		columnKeys:  columnKeys,
-		columnTypes: columnTypes,
-		tableName:   tableName,
-		datasetId:   datasetId,
-		firstRow:    firstRow,
+		ctx:          pipelineCtx,
+		cancel:       cancel,
+		parserCh:     parserCh,
+		errorsCh:     errorsCh,
+		parserExited: parserExited,
+		columnKeys:   columnKeys,
+		columnTypes:  columnTypes,
+		tableName:    tableName,
+		datasetId:    datasetId,
+		firstRow:     firstRow,
 	}, nil
 }
 
 // runJsonPipeline runs Stages 2 (validate) and 3 (store) of the JSON pipeline.
+// See runCsvPipeline for the cancellation contract — this mirrors it.
 func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn func(int)) error {
+	defer state.cancel()
+
+	// Only the error-collector writes validationErrors, and we read it after
+	// g.Wait() returns (collector has exited by then), so no mutex needed.
 	var validationErrors []ValidationError
 
 	dataCh := make(chan map[string]any, 100)
 
-	// Send first row straight to dataCh (already validated during setup)
+	// Send first row straight to dataCh (already validated during setup).
+	// Safe before goroutines start because dataCh has capacity 100.
 	dataCh <- state.firstRow
 
-	var wg sync.WaitGroup
-	var (
-		uploadErr   error
-		uploadErrMu sync.Mutex
-	)
+	g, gctx := errgroup.WithContext(state.ctx)
 
-	// Error collector — drains errorsCh into the returned validationErrors slice
-	wg.Go(func() {
+	// Propagate gctx cancellation back to state.ctx so the parser goroutine
+	// (which only watches state.ctx) unblocks when any pipeline stage errors.
+	go func() {
+		<-gctx.Done()
+		state.cancel()
+	}()
+
+	g.Go(func() error {
 		for ve := range state.errorsCh {
 			validationErrors = append(validationErrors, ve)
 		}
+		return nil
 	})
 
-	// Stage 3: Store — batches rows from dataCh and writes to DB
-	wg.Go(func() {
-		if err := uploadJsonDataset(ctx, dataCh, state.tableName, state.datasetId, progressFn); err != nil {
-			uploadErrMu.Lock()
-			uploadErr = err
-			uploadErrMu.Unlock()
-		}
+	g.Go(func() error {
+		return uploadJsonDataset(gctx, dataCh, state.tableName, state.datasetId, progressFn)
 	})
 
-	var errWg sync.WaitGroup
+	validatorExited := make(chan struct{})
+	go func() {
+		<-state.parserExited
+		<-validatorExited
+		close(state.errorsCh)
+	}()
 
-	// Stage 2: Validate — check types and missing columns, forward valid rows to dataCh
-	errWg.Go(func() {
+	g.Go(func() error {
 		defer close(dataCh)
+		defer close(validatorExited)
 
 		progressFn(30)
 
 		for nr := range state.parserCh {
 			select {
-			case <-ctx.Done():
-				return
+			case <-gctx.Done():
+				return gctx.Err()
 			default:
 			}
 
@@ -207,15 +233,14 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 						Kind:   "missing_value",
 						Detail: fmt.Sprintf("missing column %q", k),
 					}:
-					case <-ctx.Done():
-						return
+					case <-gctx.Done():
+						return gctx.Err()
 					}
 					continue
 				}
 				varType, err := ComputeVariableType(fmt.Sprintf("%v", v))
 				if err != nil {
-					fmt.Println("Error detecting type for column: ", err)
-					return
+					return fmt.Errorf("compute variable type for column %q: %w", k, err)
 				}
 				if varType != state.columnTypes[k] {
 					select {
@@ -227,33 +252,26 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 						Received: varType,
 						Detail:   fmt.Sprintf("column %q", k),
 					}:
-					case <-ctx.Done():
-						return
+					case <-gctx.Done():
+						return gctx.Err()
 					}
 				}
 			}
 
 			select {
 			case dataCh <- nr.Data:
-			case <-ctx.Done():
-				return
+			case <-gctx.Done():
+				return gctx.Err()
 			}
 		}
+		return nil
 	})
 
-	// Close errorsCh once both producers (parser + validator) are done
-	go func() {
-		errWg.Wait()
-		close(state.errorsCh)
-	}()
-
-	wg.Wait()
-
+	if err := g.Wait(); err != nil {
+		return err
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
-	}
-	if uploadErr != nil {
-		return uploadErr
 	}
 
 	if len(validationErrors) > 0 {
