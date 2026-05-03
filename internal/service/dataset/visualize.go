@@ -57,6 +57,7 @@ type ScatterParams struct {
 	Sample bool   `json:"sample"`
 }
 
+// ScatterResult is the response shape for a scatter visualization.
 type ScatterResult struct {
 	X    string                    `json:"x"`
 	Y    string                    `json:"y"`
@@ -76,6 +77,7 @@ type TimeseriesParams struct {
 	Aggregate   string   `json:"aggregate"` // "" | "avg" | "sum" | "min" | "max" | "count"
 }
 
+// TimeseriesResult is the response shape for a time-series visualization.
 type TimeseriesResult struct {
 	X           string           `json:"x"`
 	Y           []string         `json:"y"`
@@ -94,6 +96,8 @@ var (
 // CorrelationMatrixParams has no caller-tunable fields today.
 type CorrelationMatrixParams struct{}
 
+// CorrelationMatrixResult is the response shape for a correlation matrix.
+// Pairs are symmetric: matrix[a][b] == matrix[b][a]; matrix[c][c] == 1.
 type CorrelationMatrixResult struct {
 	Matrix map[string]map[string]float64 `json:"matrix"`
 }
@@ -116,6 +120,8 @@ type CategoryBreakdownCell struct {
 	Count int64  `json:"count"`
 }
 
+// CategoryBreakdownResult is the response shape for a category breakdown.
+// GroupBy is omitted in 1D responses.
 type CategoryBreakdownResult struct {
 	Column  string                  `json:"column"`
 	GroupBy string                  `json:"groupBy,omitempty"`

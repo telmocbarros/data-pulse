@@ -20,6 +20,10 @@ import (
 // when no row matched. Callers check via errors.Is.
 var ErrNotFound = errors.New("dataset not found")
 
+// StoreDataset inserts the given rows into the dataset's dynamic table.
+// Column names are inferred from the first row's keys; "created_at" is
+// remapped to "entry_date" (which is the schema column name). All
+// identifiers are validated as safe before being interpolated into SQL.
 func StoreDataset(dbExecutor config.Executor, tableName string, datasetId string, rows []map[string]any) error {
 	if len(rows) == 0 {
 		return nil
@@ -79,6 +83,9 @@ func StoreDataset(dbExecutor config.Executor, tableName string, datasetId string
 	return nil
 }
 
+// CreateDatasetTable creates a per-dataset table named
+// "<fileExtension>_datasets_<uuid>" with the supplied columns. Returns the
+// generated table name. fileExtension and column names are validated.
 func CreateDatasetTable(fileExtension string, columns [][]string) (string, error) {
 	if !sqlsafe.IsValidIdentifier(fileExtension) {
 		return "", fmt.Errorf("invalid file extension: %q", fileExtension)
@@ -113,6 +120,9 @@ func CreateDatasetTable(fileExtension string, columns [][]string) (string, error
 	return tableName, nil
 }
 
+// StoreDatasetMetadata inserts a row into the datasets table and returns
+// the generated dataset id. The metadata map carries name, tableName,
+// author, size, and description.
 func StoreDatasetMetadata(metadata map[string]any) (string, error) {
 	query := "INSERT INTO datasets (file_name, table_name, uploaded_by, size, description) VALUES ($1, $2, $3, $4, $5) RETURNING id"
 
@@ -125,6 +135,8 @@ func StoreDatasetMetadata(metadata map[string]any) (string, error) {
 	return id, nil
 }
 
+// StoreDatasetColumns inserts one row per (column_name, column_type) for
+// the given dataset id into dataset_columns.
 func StoreDatasetColumns(columns [][]string, datasetId string) error {
 	rows := make([][]any, len(columns))
 	for i, col := range columns {

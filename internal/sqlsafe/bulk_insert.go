@@ -32,7 +32,7 @@ func BulkInsert(exec execer, table string, columns []string, rows [][]any) error
 		return fmt.Errorf("invalid table name: %q", table)
 	}
 	if len(columns) == 0 {
-		return fmt.Errorf("BulkInsert: columns must be non-empty")
+		return fmt.Errorf("bulk insert: columns must be non-empty")
 	}
 	for _, c := range columns {
 		if !IsValidIdentifier(c) {
@@ -42,7 +42,7 @@ func BulkInsert(exec execer, table string, columns []string, rows [][]any) error
 	numCols := len(columns)
 	for i, r := range rows {
 		if len(r) != numCols {
-			return fmt.Errorf("BulkInsert: row %d has %d values, want %d", i, len(r), numCols)
+			return fmt.Errorf("bulk insert: row %d has %d values, want %d", i, len(r), numCols)
 		}
 	}
 

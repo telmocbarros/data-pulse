@@ -18,12 +18,12 @@ import (
 func StoreProfile(datasetId string, profile *models.DatasetProfiler) error {
 	for _, n := range profile.Numeric {
 		if err := storeNumericProfile(datasetId, n); err != nil {
-			return fmt.Errorf("error storing numeric profile for %q: %w", n.ColumnName, err)
+			return fmt.Errorf("storing numeric profile for %q: %w", n.ColumnName, err)
 		}
 	}
 	for _, c := range profile.Category {
 		if err := storeCategoryProfile(datasetId, c); err != nil {
-			return fmt.Errorf("error storing category profile for %q: %w", c.ColumnName, err)
+			return fmt.Errorf("storing category profile for %q: %w", c.ColumnName, err)
 		}
 	}
 	return nil

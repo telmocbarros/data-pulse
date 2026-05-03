@@ -50,7 +50,7 @@ func ProfileAndStore(
 	progressFn(70)
 
 	if err := profilerRepo.StoreProfile(datasetId, result); err != nil {
-		return fmt.Errorf("error storing profile: %w", err)
+		return fmt.Errorf("storing profile: %w", err)
 	}
 	progressFn(85)
 
@@ -61,7 +61,7 @@ func ProfileAndStore(
 		}
 	}
 	if err := profilerRepo.StoreCorrelationMatrix(datasetId, tableName, numericCols); err != nil {
-		return fmt.Errorf("error storing correlation matrix: %w", err)
+		return fmt.Errorf("storing correlation matrix: %w", err)
 	}
 	progressFn(95)
 

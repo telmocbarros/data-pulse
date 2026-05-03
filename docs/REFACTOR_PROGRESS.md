@@ -55,6 +55,12 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### Idiomatic Go tier — Error strings + doc comments (done)
+- All `fmt.Errorf("error <verb>: %w", err)` patterns trimmed to `fmt.Errorf("<verb>: %w", err)` — the wrapper is already an error so the redundant prefix only adds noise to nested traces.
+- `BulkInsert` validation errors lowercased (Go convention: error strings start lowercase).
+- Doc comments added to every previously-undocumented exported symbol across `models/`, `config/`, `repository/`, `handler/`, and `service/dataset/`. The file-by-file scan now reports zero missing — every exported function, type, var, and const has a leading `//` comment.
+- Style: doc comments lead with the symbol name and describe the contract, not the implementation.
+
 ### Idiomatic Go tier — Logging migrated to slog (done)
 - `cmd/server/main` and `cmd/cli/main` initialize a default `*slog.Logger` via `slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))` so package-level `slog.Info`/`slog.Error` works everywhere without dependency injection.
 - All `fmt.Println("Error ...")`, `log.Println`, and `log.Printf` *logging* sites (not user-facing CLI output) converted to `slog.Error("op failed", "err", err, ...keyvals...)` with structured key/value pairs.
@@ -116,9 +122,7 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 - Two parallel repo packages (`repository/dataset` and `repository/dataset_upload`) → merge. Will let us delete the deprecated `GetDatasetRows`.
 - CSV and JSON pipelines mirror each other → unified pipeline.
 
-### Idiomatic Go tier (remaining)
-- Capitalized error strings.
-- Doc comments on every exported symbol.
+_Idiomatic Go tier complete._
 
 ### Tests tier (zero `_test.go` files exist)
 Highest-value targets per the review:

@@ -16,6 +16,7 @@ type Executor interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
+// Storage is the global Postgres connection pool, set by SetupDatabase.
 var Storage *sql.DB
 
 // SetupDatabase loads environment variables, opens the Postgres pool,

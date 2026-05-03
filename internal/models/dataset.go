@@ -1,5 +1,7 @@
 package models
 
+// Dataset is a lightweight in-memory view of a dataset's name, schema, and
+// size. Used by the CLI flow before persistence.
 type Dataset struct {
 	Name    string
 	Columns [][]string

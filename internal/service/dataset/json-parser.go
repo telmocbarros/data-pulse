@@ -66,7 +66,7 @@ func parseJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize i
 
 	var firstRow map[string]any
 	if err := decoder.Decode(&firstRow); err != nil {
-		return nil, fmt.Errorf("error decoding first row: %w", err)
+		return nil, fmt.Errorf("decoding first row: %w", err)
 	}
 
 	ReadJsonRowAndExtractType(firstRow)
@@ -85,7 +85,7 @@ func parseJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize i
 	// 2. Create table and store metadata
 	tableName, err := repository.CreateDatasetTable("json", datasetColumns)
 	if err != nil {
-		return nil, fmt.Errorf("error while attempting to create a table: %w", err)
+		return nil, fmt.Errorf("while attempting to create a table: %w", err)
 	}
 
 	metadata := map[string]any{
@@ -98,11 +98,11 @@ func parseJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize i
 
 	datasetId, err := repository.StoreDatasetMetadata(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("error adding dataset metadata: %w", err)
+		return nil, fmt.Errorf("adding dataset metadata: %w", err)
 	}
 
 	if err = repository.StoreDatasetColumns(datasetColumns, datasetId); err != nil {
-		return nil, fmt.Errorf("error adding dataset columns: %w", err)
+		return nil, fmt.Errorf("adding dataset columns: %w", err)
 	}
 
 	// 3. Stage 1: Parse — decode JSON objects and send them downstream.

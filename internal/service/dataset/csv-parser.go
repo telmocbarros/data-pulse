@@ -80,7 +80,7 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 	// 4. Creating the metadata tables and the dataset's table
 	tableName, err := repository.CreateDatasetTable("csv", datasetColumns)
 	if err != nil {
-		return nil, fmt.Errorf("error while attempting to create a table: %w", err)
+		return nil, fmt.Errorf("while attempting to create a table: %w", err)
 	}
 
 	metadata := map[string]any{
@@ -93,11 +93,11 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 
 	datasetId, err := repository.StoreDatasetMetadata(metadata)
 	if err != nil {
-		return nil, fmt.Errorf("error adding dataset metadata: %w", err)
+		return nil, fmt.Errorf("adding dataset metadata: %w", err)
 	}
 
 	if err = repository.StoreDatasetColumns(datasetColumns, datasetId); err != nil {
-		return nil, fmt.Errorf("error adding dataset columns: %w", err)
+		return nil, fmt.Errorf("adding dataset columns: %w", err)
 	}
 
 	// 5. Stage 1: Parse — read raw CSV rows and send them downstream.

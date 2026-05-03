@@ -17,6 +17,10 @@ import (
 	profilerService "github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
 
+// FileUploadHandler accepts a multipart upload, spools it to a temp file,
+// creates an upload job, and returns 202 Accepted with the job id. Parsing,
+// validation, and storage run asynchronously in the job worker pool.
+// POST /api/datasets/
 func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := r.ParseMultipartForm(10 << 20)
@@ -80,7 +84,7 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 
 		f, err := os.Open(tmpPath)
 		if err != nil {
-			return fmt.Errorf("error opening temp file: %w", err)
+			return fmt.Errorf("opening temp file: %w", err)
 		}
 		defer f.Close()
 
