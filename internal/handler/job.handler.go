@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	jobRepo "github.com/telmocbarros/data-pulse/internal/repository/job"
 	"github.com/telmocbarros/data-pulse/internal/service/jobmanager"
@@ -12,9 +11,8 @@ import (
 // GetJobHandler returns the status and progress of a job.
 // GET /api/jobs/{id}
 func GetJobHandler(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/api/jobs/")
-	if id == "" || strings.Contains(id, "/") {
-		http.Error(w, "Invalid job ID", http.StatusBadRequest)
+	id, ok := parseUUIDPath(w, r)
+	if !ok {
 		return
 	}
 
@@ -31,8 +29,10 @@ func GetJobHandler(w http.ResponseWriter, r *http.Request) {
 // CancelJobHandler cancels a running job.
 // POST /api/jobs/{id}/cancel
 func CancelJobHandler(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/jobs/")
-	id := strings.TrimSuffix(path, "/cancel")
+	id, ok := parseUUIDPath(w, r)
+	if !ok {
+		return
+	}
 
 	if !jobmanager.Default.Cancel(id) {
 		http.Error(w, "Job not found or not running", http.StatusNotFound)

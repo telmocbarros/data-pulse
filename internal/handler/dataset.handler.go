@@ -32,7 +32,7 @@ func ListDatasetsHandler(w http.ResponseWriter, r *http.Request) {
 // GetDatasetHandler returns the metadata + schema for a single dataset.
 // GET /api/datasets/{id}
 func GetDatasetHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseDatasetID(w, r)
+	id, ok := parseUUIDPath(w, r)
 	if !ok {
 		return
 	}
@@ -51,7 +51,7 @@ func GetDatasetHandler(w http.ResponseWriter, r *http.Request) {
 // DeleteDatasetHandler soft-deletes a dataset (sets deleted_at = NOW()).
 // DELETE /api/datasets/{id}
 func DeleteDatasetHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseDatasetID(w, r)
+	id, ok := parseUUIDPath(w, r)
 	if !ok {
 		return
 	}
@@ -87,7 +87,7 @@ type validationErrorsResponse struct {
 // offset (default 0).
 // GET /api/datasets/{id}/validation-errors
 func ListValidationErrorsHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseDatasetID(w, r)
+	id, ok := parseUUIDPath(w, r)
 	if !ok {
 		return
 	}
@@ -143,7 +143,7 @@ type visualizeRequest struct {
 // service function based on req.Type.
 // POST /api/datasets/{id}/visualize
 func VisualizeDatasetHandler(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseDatasetID(w, r)
+	id, ok := parseUUIDPath(w, r)
 	if !ok {
 		return
 	}
@@ -220,9 +220,9 @@ func decodeParams(raw json.RawMessage, dst any) error {
 	return json.Unmarshal(raw, dst)
 }
 
-// parseDatasetID extracts and validates the {id} path parameter. On failure
-// it writes the appropriate 4xx response and returns ok = false.
-func parseDatasetID(w http.ResponseWriter, r *http.Request) (string, bool) {
+// parseUUIDPath extracts and validates the {id} path parameter as a UUID.
+// On failure it writes a 400 response and returns ok = false.
+func parseUUIDPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "Invalid parameter", http.StatusBadRequest)

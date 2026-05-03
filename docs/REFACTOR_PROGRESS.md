@@ -55,15 +55,20 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### DRY tier — Path ID parsing unified (done)
+- Renamed `parseDatasetID` → `parseUUIDPath` (it was already generic — reads `r.PathValue("id")`, validates as UUID, writes 400 on failure). All ID-bearing handlers now use it.
+- `profile.handler.go` switched from `extractDatasetId(r.URL.Path)` (manual `TrimPrefix`/`TrimSuffix`/`Contains` dance, no UUID validation) to `parseUUIDPath`. Old helper deleted.
+- `job.handler.go` switched from `strings.TrimPrefix`/`TrimSuffix` idioms to `parseUUIDPath`. Tightening: job IDs are now UUID-validated at the boundary (jobs.id is `UUID PRIMARY KEY DEFAULT gen_random_uuid()`, so this rejects garbage with a 400 instead of letting it fall through to a 404 from the repo).
+- All five handler files use the same shape now: `id, ok := parseUUIDPath(w, r); if !ok { return }`. ([dataset.handler.go](../internal/handler/dataset.handler.go), [profile.handler.go](../internal/handler/profile.handler.go), [job.handler.go](../internal/handler/job.handler.go))
+
 ## Pending
 
-_All spec-gap clusters complete. Next up: DRY tier and Idiomatic Go tier below._
+_All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier below._
 
 ## Tiers still to come (after spec gaps)
 
-### DRY tier
+### DRY tier (remaining)
 - Bulk-insert builder copy-pasted 6 times → single helper.
-- Dataset-ID parsing has 3 idioms → already partially unified via `parseDatasetID` in `dataset.handler.go`; apply to `profile.handler.go` and `job.handler.go`.
 - Type-detection ladder duplicated → consolidate in `internal/columntype`.
 - Two parallel repo packages (`repository/dataset` and `repository/dataset_upload`) → merge. Will let us delete the deprecated `GetDatasetRows`.
 - CSV and JSON pipelines mirror each other → unified pipeline.
