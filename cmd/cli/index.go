@@ -10,7 +10,6 @@ import (
 
 	"github.com/telmocbarros/data-pulse/config"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
-	datasetUploadRepository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
 	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
 	profilerService "github.com/telmocbarros/data-pulse/internal/service/profiler"
 )
@@ -98,7 +97,7 @@ func runProfiler(datasetId string) {
 }
 
 func listDatasets() {
-	datasets, err := datasetUploadRepository.ListDatasets()
+	datasets, err := repository.ListDatasets()
 	if err != nil {
 		slog.Error("fetch datasets failed", "err", err)
 		return
@@ -124,7 +123,7 @@ func listDatasets() {
 }
 
 func storeFile(datasetId string, filePath string, fileName string) {
-	if err := datasetUploadRepository.StoreRawFile(datasetId, filePath, fileName); err != nil {
+	if err := repository.StoreRawFile(datasetId, filePath, fileName); err != nil {
 		slog.Error("upload file to object store failed", "err", err, "datasetId", datasetId)
 		return
 	}

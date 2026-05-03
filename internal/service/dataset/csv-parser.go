@@ -8,7 +8,7 @@ import (
 	"log/slog"
 
 	"github.com/telmocbarros/data-pulse/internal/columntype"
-	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
 	"golang.org/x/sync/errgroup"
 )
 

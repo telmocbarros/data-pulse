@@ -8,7 +8,7 @@ import (
 	"strconv"
 
 	"github.com/google/uuid"
-	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
 	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
 )
 

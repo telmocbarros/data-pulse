@@ -9,7 +9,7 @@ import (
 
 	"github.com/telmocbarros/data-pulse/internal/columntype"
 	"github.com/telmocbarros/data-pulse/internal/models"
-	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
 	profilerRepo "github.com/telmocbarros/data-pulse/internal/repository/profiler"
 )
 

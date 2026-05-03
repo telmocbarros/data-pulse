@@ -55,6 +55,13 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### DRY tier — Repository packages merged (done)
+- `internal/repository/dataset_upload/` deleted entirely. Its symbols (`StoreDataset`, `CreateDatasetTable`, `StoreDatasetMetadata`, `StoreDatasetColumns`, `SoftDeleteDataset`, `ListDatasets`, `StreamDatasetRows`, `StoreRawFile`, `StoreValidationErrors`, `ListValidationErrors`, `ErrNotFound`, `mapToDatabase`, `validationErrorBatchSize`, `storeValidationErrorChunk`) plus `dataset/index.go`'s symbols all live under one `package dataset` at `internal/repository/dataset/`.
+- The merged package is split by concern across 8 files: `errors.go`, `lifecycle.go`, `schema.go`, `metadata.go`, `stream.go`, `files.go`, `validation_errors.go`, `analytics.go`. ~100-300 lines each.
+- Deprecated `GetDatasetRows` deleted (zero callers since cluster 4 introduced `StreamDatasetRows`).
+- Every caller now imports the merged package once with the alias `repository`. Two files that previously imported both packages collapsed to a single import: [cmd/cli/index.go](../cmd/cli/index.go) (was `repository` + `datasetUploadRepository`) and [internal/handler/file-upload.handler.go](../internal/handler/file-upload.handler.go) (was `datasetRepository` + `datasetUploadRepository`).
+- Pure relocation: zero function-body changes. The cross-package call `dataset.GetCorrelationMatrixFromDataset → profilerRepo.StoreCorrelationMatrix` is preserved as-is — it's a one-way functional coupling, not a cycle, and a doc comment in `analytics.go` calls it out.
+
 ### Tests tier — Pure-function targets (done: 4 of 5)
 - [internal/columntype/detect_test.go](../internal/columntype/detect_test.go) — table tests for `Detect`, `Parse`, `Classify`, `FromGo`. Covers each branch of the recognition ladder including the "0 and 1 stay numeric" precedence over bool, and verifies the parsed-value Go types.
 - [internal/sqlsafe/identifier_test.go](../internal/sqlsafe/identifier_test.go) — positive/negative table for `IsValidIdentifier` (regex), including all the SQL-injection-shape strings the regex needs to reject.
@@ -127,7 +134,6 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 ## Tiers still to come (after spec gaps)
 
 ### DRY tier (remaining)
-- Two parallel repo packages (`repository/dataset` and `repository/dataset_upload`) → merge. Will let us delete the deprecated `GetDatasetRows`.
 - CSV and JSON pipelines mirror each other → unified pipeline.
 
 _Idiomatic Go tier complete._

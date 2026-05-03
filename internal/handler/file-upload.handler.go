@@ -9,8 +9,7 @@ import (
 	"net/http"
 	"os"
 
-	datasetRepository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
-	datasetUploadRepository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
+	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
 	jobRepo "github.com/telmocbarros/data-pulse/internal/repository/job"
 	service "github.com/telmocbarros/data-pulse/internal/service/dataset"
 	"github.com/telmocbarros/data-pulse/internal/service/jobmanager"
@@ -99,7 +98,7 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		if err := datasetUploadRepository.StoreRawFile(datasetId, tmpPath, fileName); err != nil {
+		if err := repository.StoreRawFile(datasetId, tmpPath, fileName); err != nil {
 			slog.Error("upload raw file to object store failed", "err", err, "datasetId", datasetId)
 		}
 
@@ -110,7 +109,7 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		jobmanager.Default.Submit(profilingJobID, func(ctx context.Context, progressFn func(int)) error {
-			tableName, columnTypes, err := datasetRepository.GetDatasetById(datasetId)
+			tableName, columnTypes, err := repository.GetDatasetById(datasetId)
 			if err != nil {
 				return err
 			}
