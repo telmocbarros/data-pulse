@@ -2,7 +2,9 @@ package main
 
 import (
 	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/telmocbarros/data-pulse/config"
@@ -11,6 +13,8 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
 	if err := config.SetupDatabase(); err != nil {
 		log.Fatalf("Error setting up the database: %v", err)
 	}
@@ -47,7 +51,7 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 
-	log.Println("Listening on PORT 8080 ...")
+	slog.Info("server listening", "addr", srv.Addr)
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}

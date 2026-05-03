@@ -3,7 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"github.com/minio/minio-go/v7"
@@ -36,7 +36,7 @@ func SetupFileStorage() error {
 		if err := client.MakeBucket(ctx, DatasetsBucket, minio.MakeBucketOptions{}); err != nil {
 			return fmt.Errorf("unable to create bucket: %w", err)
 		}
-		log.Printf("Created bucket %q\n", DatasetsBucket)
+		slog.Info("created object-store bucket", "bucket", DatasetsBucket)
 	}
 
 	FileStorage = client

@@ -55,6 +55,15 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### Idiomatic Go tier — Logging migrated to slog (done)
+- `cmd/server/main` and `cmd/cli/main` initialize a default `*slog.Logger` via `slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))` so package-level `slog.Info`/`slog.Error` works everywhere without dependency injection.
+- All `fmt.Println("Error ...")`, `log.Println`, and `log.Printf` *logging* sites (not user-facing CLI output) converted to `slog.Error("op failed", "err", err, ...keyvals...)` with structured key/value pairs.
+- Style: lowercase event message, no period, `"err"` key for the error, additional keys (`"datasetId"`, `"table"`, `"bucket"`, etc.) for context.
+- `log.Fatalf` retained for boot-time fatals in both `main` functions — appropriate since slog has no fatal level.
+- Server start log is now `slog.Info("server listening", "addr", srv.Addr)`. MinIO bucket creation logs structured.
+- Two pieces of debug-grade chatter (`log.Println("File headers: ", ...)`, `log.Println("Column Types: ", ...)`) dropped outright rather than demoted to debug.
+- CLI `fmt.Println`/`fmt.Printf` for menu prompts, table formatting, and success messages kept — those are program output, not log events.
+
 ### Idiomatic Go tier — Hand-rolled JSON replaced (done)
 - `fmt.Fprintf(w, `{"job_id": "%s"}`, jobID)` in `file-upload.handler.go` and `profile.handler.go` replaced with `json.NewEncoder(w).Encode(jobAccepted{JobID: jobID})`. New shared `jobAccepted` type lives in [dataset.handler.go](../internal/handler/dataset.handler.go) next to `writeServiceError`.
 - `w.Write([]byte(`{"status": "cancelled"}`))` in `CancelJobHandler` switched to `json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})`.
@@ -108,7 +117,6 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 - CSV and JSON pipelines mirror each other → unified pipeline.
 
 ### Idiomatic Go tier (remaining)
-- Logging: `fmt.Println`/`fmt.Printf` everywhere → `slog`.
 - Capitalized error strings.
 - Doc comments on every exported symbol.
 

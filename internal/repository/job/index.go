@@ -1,7 +1,7 @@
 package job
 
 import (
-	"fmt"
+	"log/slog"
 
 	"github.com/telmocbarros/data-pulse/config"
 	"github.com/telmocbarros/data-pulse/internal/models"
@@ -16,7 +16,7 @@ func CreateJob(fileName, fileType string) (string, error) {
 		fileName, fileType,
 	).Scan(&id)
 	if err != nil {
-		fmt.Println("unable to create job:", err)
+		slog.Error("CreateJob insert failed", "err", err, "fileType", fileType)
 		return "", err
 	}
 	return id, nil

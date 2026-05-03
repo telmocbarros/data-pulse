@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -71,13 +72,10 @@ func StoreDataset(dbExecutor config.Executor, tableName string, datasetId string
 	}
 	query = query[:len(query)-1] // trim trailing comma
 
-	result, err := dbExecutor.Exec(query, vals...)
-	if err != nil {
-		fmt.Println("unable to execute insert query", err)
+	if _, err := dbExecutor.Exec(query, vals...); err != nil {
+		slog.Error("StoreDataset insert failed", "err", err, "table", tableName)
 		return err
 	}
-
-	fmt.Println("Successfully executed the query: ", result)
 	return nil
 }
 
@@ -121,10 +119,9 @@ func StoreDatasetMetadata(metadata map[string]any) (string, error) {
 	var id string
 	err := config.Storage.QueryRow(query, metadata["name"], metadata["tableName"], metadata["author"], metadata["size"], metadata["description"]).Scan(&id)
 	if err != nil {
-		fmt.Println("unable to execute insert query", err)
+		slog.Error("StoreDatasetMetadata insert failed", "err", err)
 		return "", err
 	}
-	fmt.Println("StoreDatasetMetadata: ", id)
 	return id, nil
 }
 
@@ -135,7 +132,7 @@ func StoreDatasetColumns(columns [][]string, datasetId string) error {
 	}
 	if err := sqlsafe.BulkInsert(config.Storage, "dataset_columns",
 		[]string{"dataset_id", "column_name", "column_type"}, rows); err != nil {
-		fmt.Println("unable to insert dataset columns", err)
+		slog.Error("StoreDatasetColumns insert failed", "err", err, "datasetId", datasetId)
 		return err
 	}
 	return nil

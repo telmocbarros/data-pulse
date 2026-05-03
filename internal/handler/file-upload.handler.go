@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -20,14 +21,14 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := r.ParseMultipartForm(10 << 20)
 	if err != nil {
-		fmt.Println("Error retrieving multipart form")
+		slog.Error("parse multipart form failed", "err", err)
 		http.Error(w, "Error retrieving multipart form", http.StatusBadRequest)
 		return
 	}
 
 	file, handler, err := r.FormFile("file")
 	if err != nil {
-		fmt.Println("Error retrieving file: ", err)
+		slog.Error("read form file failed", "err", err)
 		http.Error(w, "Error retrieving file", http.StatusBadRequest)
 		return
 	}
@@ -48,7 +49,7 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 	// after the HTTP request completes.
 	tmpFile, err := os.CreateTemp("", "datapulse-upload-*")
 	if err != nil {
-		fmt.Println("Error creating temp file:", err)
+		slog.Error("create temp file failed", "err", err)
 		http.Error(w, "Error processing upload", http.StatusInternalServerError)
 		return
 	}
@@ -56,7 +57,7 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(tmpFile, file); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpFile.Name())
-		fmt.Println("Error writing temp file:", err)
+		slog.Error("write temp file failed", "err", err)
 		http.Error(w, "Error processing upload", http.StatusInternalServerError)
 		return
 	}
@@ -65,7 +66,7 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 	jobID, err := jobRepo.CreateJob(handler.Filename, fileType)
 	if err != nil {
 		os.Remove(tmpFile.Name())
-		fmt.Println("Error creating job:", err)
+		slog.Error("create job failed", "err", err)
 		http.Error(w, "Error creating job", http.StatusInternalServerError)
 		return
 	}
@@ -95,13 +96,13 @@ func FileUploadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := datasetUploadRepository.StoreRawFile(datasetId, tmpPath, fileName); err != nil {
-			fmt.Println("Error uploading file to MinIO:", err)
+			slog.Error("upload raw file to object store failed", "err", err, "datasetId", datasetId)
 		}
 
 		// Submit profiling as a separate background job
 		profilingJobID, err := jobRepo.CreateJob(fileName, fileType+"-profile")
 		if err != nil {
-			fmt.Println("Error creating profiling job:", err)
+			slog.Error("create profiling job failed", "err", err, "datasetId", datasetId)
 			return nil
 		}
 		jobmanager.Default.Submit(profilingJobID, func(ctx context.Context, progressFn func(int)) error {

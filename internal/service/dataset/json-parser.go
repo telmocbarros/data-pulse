@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 
 	"github.com/telmocbarros/data-pulse/config"
 	"github.com/telmocbarros/data-pulse/internal/columntype"
@@ -270,7 +270,7 @@ func runJsonPipeline(ctx context.Context, state *jsonPipelineState, progressFn f
 
 	if len(validationErrors) > 0 {
 		if err := repository.StoreValidationErrors(state.datasetId, validationErrors); err != nil {
-			log.Printf("store validation errors for dataset %s: %v", state.datasetId, err)
+			slog.Error("store validation errors failed", "err", err, "datasetId", state.datasetId)
 		}
 	}
 

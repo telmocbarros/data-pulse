@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 
 	"github.com/telmocbarros/data-pulse/config"
@@ -15,6 +16,8 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
 	if err := config.SetupDatabase(); err != nil {
 		log.Fatalf("Error setting up the database: %v", err)
 	}
@@ -38,7 +41,7 @@ func main() {
 			if data != nil {
 				datasetId, err := service.ProcessCsvFile(context.Background(), bytes.NewReader(data), "sample_data.csv", int64(len(data)), noopProgress)
 				if err != nil {
-					log.Printf("CSV processing error: %v\n", err)
+					slog.Error("csv processing failed", "err", err)
 				} else {
 					fmt.Println("Successfully parsed CSV file")
 					storeFile(datasetId, filePath, "sample_data.csv")
@@ -52,7 +55,7 @@ func main() {
 			if data != nil {
 				datasetId, err := service.ProcessJsonFile(context.Background(), bytes.NewReader(data), "sample_data.json", int64(len(data)), noopProgress)
 				if err != nil {
-					log.Printf("JSON processing error: %v\n", err)
+					slog.Error("json processing failed", "err", err)
 				} else {
 					fmt.Println("Successfully parsed JSON file")
 					storeFile(datasetId, filePath, "sample_data.json")
@@ -84,11 +87,11 @@ func displayMenu() {
 func runProfiler(datasetId string) {
 	tableName, columnTypes, err := repository.GetDatasetById(datasetId)
 	if err != nil {
-		log.Printf("Error fetching dataset for profiling: %v\n", err)
+		slog.Error("fetch dataset for profiling failed", "err", err, "datasetId", datasetId)
 		return
 	}
 	if err := profilerService.ProfileAndStore(context.Background(), datasetId, tableName, columnTypes, func(int) {}); err != nil {
-		log.Printf("Error profiling dataset: %v\n", err)
+		slog.Error("profile dataset failed", "err", err, "datasetId", datasetId)
 		return
 	}
 	fmt.Println("Successfully profiled dataset")
@@ -97,7 +100,7 @@ func runProfiler(datasetId string) {
 func listDatasets() {
 	datasets, err := datasetUploadRepository.ListDatasets()
 	if err != nil {
-		log.Printf("Error fetching datasets: %v\n", err)
+		slog.Error("fetch datasets failed", "err", err)
 		return
 	}
 
@@ -122,7 +125,7 @@ func listDatasets() {
 
 func storeFile(datasetId string, filePath string, fileName string) {
 	if err := datasetUploadRepository.StoreRawFile(datasetId, filePath, fileName); err != nil {
-		log.Printf("Error uploading file to MinIO: %v\n", err)
+		slog.Error("upload file to object store failed", "err", err, "datasetId", datasetId)
 		return
 	}
 	fmt.Println("Successfully stored raw file")

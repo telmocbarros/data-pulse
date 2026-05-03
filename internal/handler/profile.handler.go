@@ -3,7 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
 
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
@@ -47,7 +47,7 @@ func CreateProfileHandler(w http.ResponseWriter, r *http.Request) {
 
 	jobID, err := jobRepo.CreateJob(id, "profile")
 	if err != nil {
-		fmt.Println("Error creating profiling job:", err)
+		slog.Error("create profiling job failed", "err", err, "datasetId", id)
 		http.Error(w, "Error creating profiling job", http.StatusInternalServerError)
 		return
 	}

@@ -5,7 +5,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 
 	"github.com/telmocbarros/data-pulse/internal/columntype"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset_upload"
@@ -56,15 +56,14 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 	// 1. Read the file
 	headers, err := csvReader.Read()
 	if err != nil {
-		log.Println("Header format is invalid: ", err)
+		slog.Error("read csv header failed", "err", err)
 		return nil, err
 	}
-	log.Println("File headers: ", headers)
 
-	// 2. extract the row filed types based on the first row with data
+	// 2. extract the row field types based on the first row with data
 	content, row_field_types, err := ReadCsvRowAndExtractType(csvReader)
 	if err != nil {
-		log.Println("Something went wrong when extracting the row field types: ", err)
+		slog.Error("extract csv row field types failed", "err", err)
 		return nil, err
 	}
 	jsonObj := make(map[string]any)
@@ -73,8 +72,6 @@ func parseCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize in
 	for idx, value := range content {
 		jsonObj[headers[idx]] = columntype.Parse(value)
 	}
-
-	log.Println("Column Types: ", row_field_types)
 	datasetColumns := extractColumns(jsonObj)
 	// allow csv.Reader to handle rows with wrong field count
 	// instead of returning an error
@@ -300,7 +297,7 @@ func runCsvPipeline(ctx context.Context, state *csvPipelineState, progressFn fun
 	if len(validationErrors) > 0 {
 		if err := repository.StoreValidationErrors(state.datasetId, validationErrors); err != nil {
 			// Persistence failure shouldn't fail the upload — the data is in.
-			log.Printf("store validation errors for dataset %s: %v", state.datasetId, err)
+			slog.Error("store validation errors failed", "err", err, "datasetId", state.datasetId)
 		}
 	}
 

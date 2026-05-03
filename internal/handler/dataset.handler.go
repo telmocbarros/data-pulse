@@ -3,7 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -21,8 +21,8 @@ type jobAccepted struct {
 // writeServiceError maps a service-layer error to an HTTP response.
 // 404 for not-found, 400 for invalid params, 500 (with a generic message)
 // for everything else. Always logs the underlying error for diagnostics.
-func writeServiceError(w http.ResponseWriter, ctx string, err error) {
-	log.Printf("%s: %v", ctx, err)
+func writeServiceError(w http.ResponseWriter, op string, err error) {
+	slog.Error(op+" failed", "err", err)
 	switch {
 	case errors.Is(err, service.ErrDatasetNotFound), errors.Is(err, repository.ErrNotFound):
 		http.Error(w, "Dataset not found", http.StatusNotFound)
@@ -126,7 +126,7 @@ func ListValidationErrorsHandler(w http.ResponseWriter, r *http.Request) {
 
 	errs, err := repository.ListValidationErrors(id, limit, offset)
 	if err != nil {
-		log.Println("ListValidationErrors error:", err)
+		slog.Error("list validation errors failed", "err", err, "datasetId", id)
 		http.Error(w, "Error fetching validation errors", http.StatusInternalServerError)
 		return
 	}

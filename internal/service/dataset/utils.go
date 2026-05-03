@@ -2,7 +2,7 @@ package dataset
 
 import (
 	"encoding/csv"
-	"log"
+	"log/slog"
 
 	"github.com/telmocbarros/data-pulse/internal/columntype"
 	"github.com/telmocbarros/data-pulse/internal/models"
@@ -15,7 +15,7 @@ type ValidationError = models.ValidationError
 func ReadCsvRowAndExtractType(csvReader *csv.Reader) ([]string, []string, error) {
 	content, err := csvReader.Read()
 	if err != nil {
-		log.Println("Something went wrong reading the file: ", err)
+		slog.Error("read csv row failed", "err", err)
 		return nil, nil, err
 	}
 
