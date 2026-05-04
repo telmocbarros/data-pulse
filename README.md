@@ -1,5 +1,34 @@
 # Data Pulse
 
+## Getting Started
+
+```bash
+# 1. Start dependencies (Postgres on :5432, MinIO on :9000, PgAdmin on :5050)
+docker compose up -d
+
+# 2. Apply schema migrations (idempotent; tracked in schema_migrations)
+go run ./cmd/migrate
+
+# 3. Run the HTTP server (listens on :8080)
+go run ./cmd/server
+```
+
+The CLI is also available for local file testing without HTTP:
+
+```bash
+go run ./cmd/cli
+```
+
+### Running tests
+
+```bash
+# Unit tests (fast, no DB required)
+go test ./...
+
+# Integration tests (requires steps 1-2 above)
+go test -tags=integration ./...
+```
+
 ## Project Structure
 
 ```
