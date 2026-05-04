@@ -17,7 +17,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
-      POSTGRES_DATABASE: data-pulse-db
+      POSTGRES_DB: data-pulse-db
     ports:
       - 5432:5432
     volumes:

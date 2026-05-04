@@ -2,9 +2,11 @@
 // yet, in lexical order. Tracks applied versions in a schema_migrations
 // table that the runner creates if missing.
 //
-// 00-create-database.sql is intentionally skipped — you can't CREATE
-// DATABASE from inside the database you're connected to. Provision the
-// database once via docker-compose or by hand, then run this.
+// The database itself must already exist when this runs. With docker-
+// compose that happens automatically (POSTGRES_DB in docker-compose.yaml
+// provisions data-pulse-db on first container boot). For other setups
+// create the database first with `psql -U postgres -c 'CREATE DATABASE
+// "data-pulse-db"'`.
 //
 // Usage:
 //
@@ -26,13 +28,10 @@ import (
 	"github.com/telmocbarros/data-pulse/internal/repository/migrations"
 )
 
-const (
-	bootstrapDDL = `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version    TEXT PRIMARY KEY,
-		applied_at TIMESTAMP NOT NULL DEFAULT NOW()
-	)`
-	skipFile = "00-create-database.sql"
-)
+const bootstrapDDL = `CREATE TABLE IF NOT EXISTS schema_migrations (
+	version    TEXT PRIMARY KEY,
+	applied_at TIMESTAMP NOT NULL DEFAULT NOW()
+)`
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -65,10 +64,6 @@ func run(db *sql.DB) error {
 	}
 
 	for _, name := range files {
-		if name == skipFile {
-			slog.Info("skipping (must be applied manually)", "file", name)
-			continue
-		}
 		if applied[name] {
 			slog.Info("already applied", "file", name)
 			continue
