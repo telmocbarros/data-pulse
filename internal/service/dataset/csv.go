@@ -15,10 +15,11 @@ import (
 type csvRecord = []string
 
 // csvSource adapts csv.Reader to RowSource[csvRecord]. Loops past
-// read failures (emitting malformed_row and advancing) so the
-// orchestrator only sees forwarded rows or EOF. On column-count
-// mismatch the source emits malformed_row but still forwards the
-// row — preserving today's behavior; see csvValidator FIXME.
+// read failures and column-count mismatches (emitting malformed_row
+// and advancing) so the orchestrator only sees well-formed rows or
+// EOF. A row whose cell count does not match the schema is dropped
+// entirely — its malformed_row error reaches storage via errorsCh
+// but no garbage row reaches the dataset table.
 type csvSource struct {
 	reader          *csv.Reader
 	expectedColumns int
@@ -68,8 +69,8 @@ func (s *csvSource) Next(ctx context.Context, errCh chan<- ValidationError) (num
 			case <-ctx.Done():
 				return numbered[csvRecord]{}, false, nil
 			}
-			// Forward the row anyway (preserves today's behavior; see
-			// csvValidator FIXME for the latent panic this enables).
+			s.rowNumber++
+			continue
 		}
 
 		row := numbered[csvRecord]{Row: s.rowNumber, Data: record}
@@ -82,22 +83,15 @@ func (s *csvSource) Next(ctx context.Context, errCh chan<- ValidationError) (num
 // from the first data row. Iterates by index — empty cells produce
 // missing_value errors; non-matching cell classifications produce
 // type_mismatch errors. Empty cells are skipped by Parse so the output
-// map is intentionally sparse on those keys.
-//
-// FIXME(csv-overflow): when a row has more columns than the header,
-// the loop indexes v.headers[idx] beyond its length and panics.
-// Real CSVs rarely have this shape so it hasn't hit production. Today's
-// csvSource emits malformed_row for the count mismatch but still
-// forwards the row (preserved here for bug-for-bug parity with the
-// pre-unification pipeline). Fix in a follow-up: either skip the row
-// in csvSource on count mismatch, or clamp idx < len(headers) here.
+// map is intentionally sparse on those keys. Rows reaching the
+// validator are guaranteed to have len(row.Data) == len(rowFieldTypes)
+// because csvSource drops count-mismatched rows upstream.
 type csvValidator struct {
 	headers       []string
 	rowFieldTypes []string
 }
 
 func (v *csvValidator) Validate(row numbered[csvRecord]) (map[string]any, []ValidationError, bool) {
-	expectedColumns := len(v.rowFieldTypes)
 	out := make(map[string]any)
 	var errs []ValidationError
 
@@ -111,17 +105,15 @@ func (v *csvValidator) Validate(row numbered[csvRecord]) (map[string]any, []Vali
 			continue
 		}
 
-		if idx < expectedColumns {
-			variableType := columntype.Classify(value)
-			if v.rowFieldTypes[idx] != variableType {
-				errs = append(errs, ValidationError{
-					Row:      row.Row,
-					Column:   int32(idx),
-					Kind:     "type_mismatch",
-					Expected: v.rowFieldTypes[idx],
-					Received: variableType,
-				})
-			}
+		variableType := columntype.Classify(value)
+		if v.rowFieldTypes[idx] != variableType {
+			errs = append(errs, ValidationError{
+				Row:      row.Row,
+				Column:   int32(idx),
+				Kind:     "type_mismatch",
+				Expected: v.rowFieldTypes[idx],
+				Received: variableType,
+			})
 		}
 		out[v.headers[idx]] = columntype.Parse(value)
 	}

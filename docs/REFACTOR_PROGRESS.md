@@ -55,6 +55,11 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - All three callers updated: [profile.handler.go](../internal/handler/profile.handler.go), [file-upload.handler.go](../internal/handler/file-upload.handler.go) (handlers thread ctx + progressFn from the JobFunc closure), [cmd/cli/index.go](../cmd/cli/index.go) (passes `context.Background()` and a no-op `func(int){}`).
 - **Known follow-up (out of scope):** `NumericProfiler.Values []float64` accumulates every numeric value for percentile/stddev/histogram passes in `finaliseNumeric`. Streaming the input doesn't bound this slice — separate algorithmic work (t-digest sketches, Welford's algorithm, or a second SQL pass for histogram bucketing — primitives already exist in `repository.computeColumnHistogram`).
 
+### Bug fix — CSV column-count panic (done)
+- Latent panic in `csvValidator.Validate` (when a row had more cells than the header, `v.headers[idx]` indexed out of range) is gone. Fix lives in `csvSource.Next`: a row whose cell count does not match the schema is now dropped entirely — `malformed_row` still emitted to `errorsCh`, but no garbage row reaches the validator or the dataset table. Underflow rows get the same skip-row treatment for symmetry.
+- The defensive `if idx < expectedColumns` guard inside `csvValidator.Validate` was dead code under the new contract; removed. Validator's doc comment now states the count-match invariant the source upholds.
+- New unit tests in [csv_test.go](../internal/service/dataset/csv_test.go) cover normal rows, overflow, underflow, and immediate-EOF — driving `csvSource.Next` directly with a `csv.Reader` over a `strings.Reader` (no DB needed).
+
 ### DRY tier — CSV/JSON pipelines unified (done)
 - New `internal/service/dataset/pipeline.go` owns the generic orchestrator: `RowSource[T]` and `RowValidator[T]` interfaces, the `numbered[T]` row wrapper, `runPipeline[T]` (errgroup + cancellation + propagation watcher + closer goroutine + best-effort `StoreValidationErrors`), and `uploadDataset` (renamed from the misleading `uploadJsonDataset`).
 - `csv-parser.go` and `json-parser.go` deleted entirely. Replaced by `csv.go` and `json.go`, each containing a small `Source` + `Validator` adapter and the matching `ProcessXFile` entry point. Format-specific code is just the parsing primitive (`csv.Reader.Read` vs `json.Decoder.Decode`), the validation iteration (by index vs by key), and JSON's `firstRow` pre-send. Everything else (the ~90-line errgroup/cancellation skeleton that used to be duplicated line-for-line) lives once in `runPipeline`.
@@ -144,9 +149,6 @@ _All spec-gap clusters complete. Next up: rest of DRY tier and Idiomatic Go tier
 ## Tiers still to come (after spec gaps)
 
 _DRY tier complete._
-
-### Open follow-ups (not blocking any tier)
-- **`FIXME(csv-overflow)`** in [csv.go](../internal/service/dataset/csv.go) on `csvValidator`. Pre-existing latent panic preserved bug-for-bug by the unification commit. Fix: either skip the row in `csvSource.Next` on column-count mismatch, or clamp `idx < len(v.headers)` in `csvValidator.Validate`. Worth a small dedicated commit + test.
 
 _Idiomatic Go tier complete._
 
