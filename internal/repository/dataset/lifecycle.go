@@ -3,6 +3,7 @@ package dataset
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -22,10 +23,21 @@ func StoreDataset(dbExecutor config.Executor, tableName string, datasetId string
 	if !sqlsafe.IsValidIdentifier(tableName) {
 		return fmt.Errorf("invalid table name: %q", tableName)
 	}
-	// extract column names from the first row
-	columns := make([]string, 0, len(rows[0])+1)
-	columns = append(columns, "id", "dataset_id")
+	// Extract column names from the first row, sorted so the INSERT
+	// column list is deterministic across batches and uploads. Map
+	// iteration order is randomized, so without sorting two batches
+	// in the same upload could pick different orderings — the values
+	// would still bind correctly per-row, but the SQL text would
+	// drift, defeating prepared-statement reuse and complicating
+	// debugging.
+	keys := make([]string, 0, len(rows[0]))
 	for key := range rows[0] {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	columns := make([]string, 0, len(keys)+2)
+	columns = append(columns, "id", "dataset_id")
+	for _, key := range keys {
 		if key == "created_at" {
 			columns = append(columns, "entry_date")
 		} else {

@@ -136,6 +136,13 @@ func (v *csvValidator) Validate(row numbered[csvRecord]) (map[string]any, []Vali
 // on success.
 func ProcessCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize int64, progressFn func(int)) (string, error) {
 	csvReader := csv.NewReader(f)
+	// Permissive column counts apply from the very first Read. Without
+	// this, the encoding/csv default locks FieldsPerRecord to whatever
+	// the first call returned (header row), and a first data row with a
+	// different cell count would fail the entire upload before csvSource
+	// ever runs. csvSource itself enforces the header-derived column
+	// count and emits malformed_row for mismatches.
+	csvReader.FieldsPerRecord = -1
 
 	// 1. Read the header row.
 	headers, err := csvReader.Read()
@@ -152,15 +159,17 @@ func ProcessCsvFile(ctx context.Context, f io.Reader, fileName string, fileSize 
 		slog.Error("extract csv row field types failed", "err", err)
 		return "", err
 	}
+	// The schema is derived from this row; if its cell count doesn't
+	// match the header, every subsequent row would mismatch the schema.
+	// Reject upfront rather than producing a corrupt dataset table.
+	if len(content) != len(headers) {
+		return "", fmt.Errorf("first data row has %d cells, header has %d", len(content), len(headers))
+	}
 	jsonObj := make(map[string]any)
 	for idx, value := range content {
 		jsonObj[headers[idx]] = columntype.Parse(value)
 	}
 	datasetColumns := extractColumns(jsonObj)
-
-	// Allow csv.Reader to handle rows with wrong field count internally
-	// instead of returning an error — csvSource then emits malformed_row.
-	csvReader.FieldsPerRecord = -1
 
 	// 3. Create the dataset table and store its metadata.
 	tableName, err := repository.CreateDatasetTable("csv", datasetColumns)

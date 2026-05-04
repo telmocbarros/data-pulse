@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/telmocbarros/data-pulse/internal/columntype"
 	repository "github.com/telmocbarros/data-pulse/internal/repository/dataset"
@@ -132,10 +133,17 @@ func ProcessJsonFile(ctx context.Context, f io.Reader, fileName string, fileSize
 	}
 	ReadJsonRowAndExtractType(firstRow)
 
+	// Sort columnKeys so per-row validation walks the schema in a
+	// stable order. Without this, a row missing two keys would emit
+	// its missing_value errors in random order, making logs and
+	// dataset_validation_errors entries non-reproducible. Table
+	// column order is handled separately in extractColumns and
+	// StoreDataset.
 	columnKeys := make([]string, 0, len(firstRow))
 	for k := range firstRow {
 		columnKeys = append(columnKeys, k)
 	}
+	sort.Strings(columnKeys)
 	columnTypes := make(map[string]string, len(firstRow))
 	for k, v := range firstRow {
 		columnTypes[k] = columntype.FromGo(v)
