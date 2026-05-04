@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/telmocbarros/data-pulse/config"
@@ -233,12 +232,17 @@ func TestJsonPipelineEndToEnd(t *testing.T) {
 
 // TestCsvPipelineCancellation injects a cancellable context and verifies
 // the pipeline returns context.Canceled rather than completing normally.
-// Mildly timing-sensitive — see the plan's risks section.
+//
+// Cancellation is triggered deterministically from the progressFn: when
+// runPipeline's validator stage starts (progressFn(30)), we cancel.
+// That moment is reachable from every CSV upload — past metadata setup,
+// before the storage stage commits — so the test exercises the same
+// failure mode regardless of host speed.
 func TestCsvPipelineCancellation(t *testing.T) {
 	setupIntegration(t)
 
-	// 100 rows of valid data — large enough that a 10ms cancel reliably
-	// fires before the storage stage commits.
+	// 100 rows of valid data so the storage stage has work in flight
+	// when the cancel arrives.
 	var b strings.Builder
 	b.WriteString("name,age,email\n")
 	for i := 0; i < 100; i++ {
@@ -247,16 +251,20 @@ func TestCsvPipelineCancellation(t *testing.T) {
 	fixture := b.String()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		cancel()
-	}()
+	progressFn := func(pct int) {
+		// runPipeline's validator goroutine calls progressFn(30) as
+		// its first action. That's our cancellation barrier — fires
+		// after metadata is committed, before storage finishes.
+		if pct == 30 {
+			cancel()
+		}
+	}
 
-	datasetId, err := ProcessCsvFile(ctx, strings.NewReader(fixture), "cancel.csv", int64(len(fixture)), func(int) {})
+	datasetId, err := ProcessCsvFile(ctx, strings.NewReader(fixture), "cancel.csv", int64(len(fixture)), progressFn)
 
-	// The metadata row may or may not exist depending on whether cancel
-	// fired before or after StoreDatasetMetadata. Either is fine — clean
-	// up if it does.
+	// The metadata row was created during setup (progressFn(10) fires
+	// before the cancellation barrier), so cleanup always has something
+	// to do here.
 	if datasetId != "" {
 		if _, parseErr := uuid.Parse(datasetId); parseErr == nil {
 			cleanupDataset(t, datasetId)
