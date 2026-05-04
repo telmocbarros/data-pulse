@@ -77,13 +77,14 @@ The validator could deadlock if storage errored and returned, because nothing ca
 - Every caller now imports the merged package once with the alias `repository`. Two files that previously imported both packages collapsed to a single import: [cmd/cli/index.go](../cmd/cli/index.go) (was `repository` + `datasetUploadRepository`) and [internal/handler/file-upload.handler.go](../internal/handler/file-upload.handler.go) (was `datasetRepository` + `datasetUploadRepository`).
 - Pure relocation: zero function-body changes. The cross-package call `dataset.GetCorrelationMatrixFromDataset → profilerRepo.StoreCorrelationMatrix` is preserved as-is — it's a one-way functional coupling, not a cycle, and a doc comment in `analytics.go` calls it out.
 
-### Tests tier — Pure-function targets (done: 4 of 5)
+### Tests tier — Pure-function targets (done: 5 of 5)
 - [internal/columntype/detect_test.go](../internal/columntype/detect_test.go) — table tests for `Detect`, `Parse`, `Classify`, `FromGo`. Covers each branch of the recognition ladder including the "0 and 1 stay numeric" precedence over bool, and verifies the parsed-value Go types.
 - [internal/sqlsafe/identifier_test.go](../internal/sqlsafe/identifier_test.go) — positive/negative table for `IsValidIdentifier` (regex), including all the SQL-injection-shape strings the regex needs to reject.
 - [internal/sqlsafe/bulk_insert_test.go](../internal/sqlsafe/bulk_insert_test.go) — uses a stub `execer` to test `BulkInsert`'s pre-DB validation (empty rows no-op, bad identifiers, empty columns, row-length mismatch) and verifies the generated query string and arg flattening end-to-end without touching Postgres.
 - [internal/service/profiler/profiler_test.go](../internal/service/profiler/profiler_test.go) — `percentile` (empty, singleton, exact-index, interpolated), `toFloat64` (every accepted/rejected input type), `finaliseNumeric` (no-count short-circuit, all-same-value single-bucket fast path, full 1..10 dataset with histogram-totals invariant).
 - [internal/service/dataset/visualize_test.go](../internal/service/dataset/visualize_test.go) — every `(*Params).resolve` method tested via `errors.Is(err, ErrInvalidParams)`, covering defaults, limit clamping, type rejection, mutually-exclusive constraints (X==Y, GroupBy==Column), and the GroupBy/Aggregate dependency rules.
-- **Remaining target:** CSV/JSON pipeline integration test with a known-bad fixture. Needs DB stubs or a test container; deferred to its own session.
+- [internal/service/dataset/csv_test.go](../internal/service/dataset/csv_test.go) — focused unit tests on `csvSource.Next` (normal, overflow, underflow, empty input). Drives the source directly with a `csv.Reader` over a `strings.Reader`, no DB needed. Added alongside the csv-overflow fix.
+- [internal/service/dataset/pipeline_integration_test.go](../internal/service/dataset/pipeline_integration_test.go) — end-to-end pipeline tests gated by `//go:build integration`. Three tests against the dev DB: CSV happy+sad path mix (asserts row counts in the dynamic table + counts of each ValidationError kind), JSON happy+sad path mix (with firstRow bypass behavior verified), and ctx-cancellation (asserts `errors.Is(err, context.Canceled)`). Run via `go test -tags=integration ./internal/service/dataset/...`. Falls back to `t.Skipf` if the DB connection fails, so default `go test ./...` is unaffected and the integration suite is opt-in.
 
 ### Idiomatic Go tier — Error strings + doc comments (done)
 - All `fmt.Errorf("error <verb>: %w", err)` patterns trimmed to `fmt.Errorf("<verb>: %w", err)` — the wrapper is already an error so the redundant prefix only adds noise to nested traces.
@@ -152,8 +153,9 @@ _DRY tier complete._
 
 _Idiomatic Go tier complete._
 
-### Tests tier (remaining)
-- CSV/JSON pipeline integration with a known-bad fixture (needs DB stubs or a test container; deferred to its own session).
+_Tests tier complete._
+
+**All tracked refactor items done.** Future work tracked outside this document.
 
 ## Verification status
 
