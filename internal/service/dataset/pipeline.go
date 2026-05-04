@@ -186,8 +186,23 @@ func runPipeline[T any](
 		return nil
 	})
 
-	if err := g.Wait(); err != nil {
-		return err
+	waitErr := g.Wait()
+
+	// Persist any collected validation errors before returning. We do this
+	// even when waitErr is non-nil (e.g. uploadDataset crashed on a
+	// type-incompatible cell that the validator forwarded with type_mismatch
+	// emitted) — the diagnostic trail is the most useful thing the user can
+	// get on a partial failure. Skip only when the caller cancelled, since
+	// they've signaled they don't want any further work for this dataset.
+	if ctx.Err() == nil && len(validationErrors) > 0 {
+		if err := repository.StoreValidationErrors(datasetId, validationErrors); err != nil {
+			// Persistence failure shouldn't override the original error.
+			slog.Error("store validation errors failed", "err", err, "datasetId", datasetId)
+		}
+	}
+
+	if waitErr != nil {
+		return waitErr
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -195,14 +210,6 @@ func runPipeline[T any](
 	if sourceErr != nil {
 		return sourceErr
 	}
-
-	if len(validationErrors) > 0 {
-		if err := repository.StoreValidationErrors(datasetId, validationErrors); err != nil {
-			// Persistence failure shouldn't fail the upload — the data is in.
-			slog.Error("store validation errors failed", "err", err, "datasetId", datasetId)
-		}
-	}
-
 	return nil
 }
 
