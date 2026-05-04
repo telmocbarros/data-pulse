@@ -449,11 +449,39 @@ func GetTimeseriesPlotFromDataset(
 	return out, nil
 }
 
-var validGroupByUnitsRepo = map[string]struct{}{"day": {}, "week": {}, "month": {}}
-
-var validAggregateFnsRepo = map[string]struct{}{
-	"AVG": {}, "SUM": {}, "MIN": {}, "MAX": {}, "COUNT": {},
+// TimeseriesGroupByUnits enumerates the date_trunc units accepted by
+// GetTimeseriesPlotGrouped. The unit string is interpolated into SQL,
+// so this is also the validation allowlist (defense-in-depth even
+// though service-layer resolve methods already check it).
+var TimeseriesGroupByUnits = map[string]struct{}{
+	"day":   {},
+	"week":  {},
+	"month": {},
 }
+
+// TimeseriesAggregateFns maps a user-input aggregate name (lowercase)
+// to the SQL function name interpolated into the grouped time-series
+// query. Service-layer resolve methods read this map to translate
+// user input; the repo uses its values to validate the SQL function
+// name before interpolation.
+var TimeseriesAggregateFns = map[string]string{
+	"avg":   "AVG",
+	"sum":   "SUM",
+	"min":   "MIN",
+	"max":   "MAX",
+	"count": "COUNT",
+}
+
+// validAggregateFnSQLs is the set of SQL function names derived from
+// TimeseriesAggregateFns. Built once at package init for O(1) lookup
+// during validation.
+var validAggregateFnSQLs = func() map[string]struct{} {
+	out := make(map[string]struct{}, len(TimeseriesAggregateFns))
+	for _, sql := range TimeseriesAggregateFns {
+		out[sql] = struct{}{}
+	}
+	return out
+}()
 
 // GetTimeseriesPlotGrouped returns rows truncated to groupByUnit on xColumn,
 // with each yColumn aggregated via aggregateFn. groupByUnit must be one of
@@ -483,10 +511,10 @@ func GetTimeseriesPlotGrouped(
 	if seriesColumn != "" && !sqlsafe.IsValidIdentifier(seriesColumn) {
 		return nil, fmt.Errorf("invalid series column: %q", seriesColumn)
 	}
-	if _, ok := validGroupByUnitsRepo[groupByUnit]; !ok {
+	if _, ok := TimeseriesGroupByUnits[groupByUnit]; !ok {
 		return nil, fmt.Errorf("invalid group-by unit: %q", groupByUnit)
 	}
-	if _, ok := validAggregateFnsRepo[aggregateFn]; !ok {
+	if _, ok := validAggregateFnSQLs[aggregateFn]; !ok {
 		return nil, fmt.Errorf("invalid aggregate function: %q", aggregateFn)
 	}
 

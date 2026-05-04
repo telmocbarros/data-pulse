@@ -88,9 +88,13 @@ type TimeseriesResult struct {
 	Data        []map[string]any `json:"data"`
 }
 
+// Aliases for the canonical timeseries-grouping allowlists owned by the
+// repository layer (the maps' values are interpolated into SQL, so the
+// repo is the right place for the source of truth). The service uses
+// them for caller-side input validation in TimeseriesParams.resolve.
 var (
-	validGroupByUnits = map[string]struct{}{"day": {}, "week": {}, "month": {}}
-	validAggregateFns = map[string]string{"avg": "AVG", "sum": "SUM", "min": "MIN", "max": "MAX", "count": "COUNT"}
+	validGroupByUnits = repository.TimeseriesGroupByUnits
+	validAggregateFns = repository.TimeseriesAggregateFns
 )
 
 // CorrelationMatrixParams has no caller-tunable fields today.
