@@ -10,6 +10,10 @@ When the user asks for a review, refactor pass, or cleanup cycle, follow [docs/R
 # Start dependencies (PostgreSQL on :5432, PgAdmin on :5050)
 docker compose up -d
 
+# Apply pending schema migrations (idempotent; tracked in schema_migrations).
+# 00-create-database.sql is skipped — docker-compose creates the DB on first boot.
+go run ./cmd/migrate
+
 # Run HTTP server (listens on :8080)
 go run ./cmd/server
 
@@ -22,8 +26,8 @@ go test ./...
 # Run a single test
 go test ./internal/service/dataset/ -run TestFunctionName
 
-# Run the integration test suite (requires `docker compose up -d` + migrations applied)
-go test -tags=integration ./internal/service/dataset/...
+# Run the integration test suite (requires `docker compose up -d` + `go run ./cmd/migrate`)
+go test -tags=integration ./...
 ```
 
 ## Architecture
@@ -44,6 +48,7 @@ Cancellation: the orchestrator owns a child context; any errgroup-stage failure 
 
 - `cmd/server/` — HTTP server entry point. Routes for `/api/datasets/...`, `/api/jobs/...`, `/health`.
 - `cmd/cli/` — CLI for local file testing without HTTP.
+- `cmd/migrate/` — Schema migration runner. Reads `internal/repository/migrations/*.sql` (embedded), tracks applied versions in `schema_migrations`, runs each migration in a transaction.
 - `internal/handler/` — HTTP handlers, route to service layer; shared error mapping in `dataset.handler.go`.
 - `internal/service/dataset/` — Pipeline orchestration (`pipeline.go` with generic `runPipeline[T]`), CSV/JSON adapters (`csv.go`, `json.go`), visualization service (`visualize.go`), metadata service.
 - `internal/service/profiler/` — Concurrent column profiler.
@@ -54,7 +59,7 @@ Cancellation: the orchestrator owns a child context; any errgroup-stage failure 
 - `internal/sqlsafe/` — Identifier validation regex + `BulkInsert` helper for multi-row VALUES inserts.
 - `internal/models/` — Domain structs (`ValidationError`, `DatasetColumn`, `Job`, etc.).
 - `config/` — Database connection pool (pgx via database/sql, global `config.Storage`); MinIO client setup.
-- `internal/repository/migrations/` — SQL schema for `datasets`, `dataset_columns`, `dataset_validation_errors`, `numeric_profiles`, `category_profiles`, `correlation_matrices`, `jobs`. Applied manually via psql; no Go-side runner.
+- `internal/repository/migrations/` — SQL schema for `datasets`, `dataset_columns`, `dataset_validation_errors`, `numeric_profiles`, `category_profiles`, `correlation_matrices`, `jobs`. Applied via `go run ./cmd/migrate` (idempotent; tracks applied versions in `schema_migrations`).
 
 ### Key Conventions
 

@@ -12,7 +12,7 @@
 //
 // Prerequisites (same as the pipeline integration test):
 //   - `docker compose up -d` (Postgres on localhost:5432)
-//   - All migrations in internal/repository/migrations/*.sql applied
+//   - `go run ./cmd/migrate` (applies internal/repository/migrations/*.sql)
 
 package dataset
 
@@ -40,7 +40,7 @@ func setupIntegration(t *testing.T) {
 		return
 	}
 	if err := config.SetupDatabase(); err != nil {
-		t.Skipf("integration test skipped: %v (is `docker compose up -d` running and the schema migrated?)", err)
+		t.Skipf("integration test skipped: %v (run `docker compose up -d && go run ./cmd/migrate` first)", err)
 	}
 }
 

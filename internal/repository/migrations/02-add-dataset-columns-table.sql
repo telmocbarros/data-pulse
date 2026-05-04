@@ -6,4 +6,4 @@ CREATE TABLE IF NOT EXISTS dataset_columns(
     UNIQUE (dataset_id, column_name)
 );
 
-CREATE INDEX dataset_id_dataset_columns ON dataset_columns(dataset_id);
+CREATE INDEX IF NOT EXISTS dataset_id_dataset_columns ON dataset_columns(dataset_id);

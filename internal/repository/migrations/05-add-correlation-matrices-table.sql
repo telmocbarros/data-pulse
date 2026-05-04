@@ -7,4 +7,4 @@ CREATE TABLE IF NOT EXISTS correlation_matrices (
     UNIQUE (dataset_id, column_a, column_b)
 );
 
-CREATE INDEX idx_correlation_matrices_dataset ON correlation_matrices(dataset_id);
+CREATE INDEX IF NOT EXISTS idx_correlation_matrices_dataset ON correlation_matrices(dataset_id);

@@ -1,5 +1,3 @@
-CREATE 
-
 CREATE TABLE IF NOT EXISTS datasets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     file_name VARCHAR(50),
@@ -10,5 +8,5 @@ CREATE TABLE IF NOT EXISTS datasets (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX id_datasets ON datasets(id);
-CREATE INDEX file_name_datasets ON datasets(file_name);
+CREATE INDEX IF NOT EXISTS id_datasets ON datasets(id);
+CREATE INDEX IF NOT EXISTS file_name_datasets ON datasets(file_name);

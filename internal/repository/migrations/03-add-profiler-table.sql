@@ -62,9 +62,9 @@ CREATE TABLE IF NOT EXISTS category_profile_type_distributions (
     UNIQUE (category_profile_id, type_name)
 );
 
-CREATE INDEX idx_numeric_profiles_dataset ON numeric_profiles(dataset_id);
-CREATE INDEX idx_numeric_profile_histograms_profile ON numeric_profile_histograms(numeric_profile_id);
-CREATE INDEX idx_numeric_profile_type_dist_profile ON numeric_profile_type_distributions(numeric_profile_id);
-CREATE INDEX idx_category_profiles_dataset ON category_profiles(dataset_id);
-CREATE INDEX idx_category_profile_freq_values_profile ON category_profile_frequent_values(category_profile_id);
-CREATE INDEX idx_category_profile_type_dist_profile ON category_profile_type_distributions(category_profile_id);
+CREATE INDEX IF NOT EXISTS idx_numeric_profiles_dataset ON numeric_profiles(dataset_id);
+CREATE INDEX IF NOT EXISTS idx_numeric_profile_histograms_profile ON numeric_profile_histograms(numeric_profile_id);
+CREATE INDEX IF NOT EXISTS idx_numeric_profile_type_dist_profile ON numeric_profile_type_distributions(numeric_profile_id);
+CREATE INDEX IF NOT EXISTS idx_category_profiles_dataset ON category_profiles(dataset_id);
+CREATE INDEX IF NOT EXISTS idx_category_profile_freq_values_profile ON category_profile_frequent_values(category_profile_id);
+CREATE INDEX IF NOT EXISTS idx_category_profile_type_dist_profile ON category_profile_type_distributions(category_profile_id);

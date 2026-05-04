@@ -9,4 +9,4 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
