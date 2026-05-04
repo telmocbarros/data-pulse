@@ -82,17 +82,24 @@ func (s *csvSource) Next(ctx context.Context, errCh chan<- ValidationError) (num
 // csvValidator checks each parsed row against the rowFieldTypes derived
 // from the first data row. Iterates by index — empty cells produce
 // missing_value errors; non-matching cell classifications produce
-// type_mismatch errors. Empty cells are skipped by Parse so the output
-// map is intentionally sparse on those keys. Rows reaching the
-// validator are guaranteed to have len(row.Data) == len(rowFieldTypes)
-// because csvSource drops count-mismatched rows upstream.
+// type_mismatch errors. Rows reaching the validator are guaranteed to
+// have len(row.Data) == len(rowFieldTypes) because csvSource drops
+// count-mismatched rows upstream.
+//
+// Output contract: the returned map always contains every header key.
+// Cells that fail validation (empty or type-mismatched) are stored as
+// nil so they round-trip to the dataset table as NULL — keeping the
+// row recoverable while the original error is recorded separately in
+// dataset_validation_errors. Sparse maps would silently drop columns
+// downstream because StoreDataset infers the SQL column list from the
+// first row in each batch.
 type csvValidator struct {
 	headers       []string
 	rowFieldTypes []string
 }
 
 func (v *csvValidator) Validate(row numbered[csvRecord]) (map[string]any, []ValidationError, bool) {
-	out := make(map[string]any)
+	out := make(map[string]any, len(v.headers))
 	var errs []ValidationError
 
 	for idx, value := range row.Data {
@@ -102,6 +109,7 @@ func (v *csvValidator) Validate(row numbered[csvRecord]) (map[string]any, []Vali
 				Column: int32(idx),
 				Kind:   "missing_value",
 			})
+			out[v.headers[idx]] = nil
 			continue
 		}
 
@@ -114,6 +122,8 @@ func (v *csvValidator) Validate(row numbered[csvRecord]) (map[string]any, []Vali
 				Expected: v.rowFieldTypes[idx],
 				Received: variableType,
 			})
+			out[v.headers[idx]] = nil
+			continue
 		}
 		out[v.headers[idx]] = columntype.Parse(value)
 	}

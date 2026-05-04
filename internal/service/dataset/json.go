@@ -56,14 +56,24 @@ func (s *jsonSource) Next(ctx context.Context, errCh chan<- ValidationError) (nu
 
 // jsonValidator checks each parsed row against the column types derived
 // from the firstRow. Iterates by key (not by index) since JSON rows are
-// maps. Missing keys produce missing_value errors but the partial row
-// still proceeds to storage — sparse maps are intentional.
+// maps.
+//
+// Output contract: the returned map always contains every columnKeys
+// entry. Missing keys and type-mismatched values both round-trip as
+// nil so they reach the dataset table as NULL — keeping the row
+// recoverable while the original error is recorded separately in
+// dataset_validation_errors. Extra keys present in the input but not
+// in columnKeys are dropped (they have no column in the dataset
+// table). Sparse output would silently lose columns downstream because
+// StoreDataset infers the SQL column list from the first row in each
+// batch.
 type jsonValidator struct {
 	columnKeys  []string
 	columnTypes map[string]string
 }
 
 func (v *jsonValidator) Validate(row numbered[jsonRow]) (jsonRow, []ValidationError, bool) {
+	out := make(jsonRow, len(v.columnKeys))
 	var errs []ValidationError
 	for _, k := range v.columnKeys {
 		val, exists := row.Data[k]
@@ -74,6 +84,7 @@ func (v *jsonValidator) Validate(row numbered[jsonRow]) (jsonRow, []ValidationEr
 				Kind:   "missing_value",
 				Detail: fmt.Sprintf("missing column %q", k),
 			})
+			out[k] = nil
 			continue
 		}
 		varType := columntype.FromGo(val)
@@ -86,9 +97,12 @@ func (v *jsonValidator) Validate(row numbered[jsonRow]) (jsonRow, []ValidationEr
 				Received: varType,
 				Detail:   fmt.Sprintf("column %q", k),
 			})
+			out[k] = nil
+			continue
 		}
+		out[k] = val
 	}
-	return row.Data, errs, true
+	return out, errs, true
 }
 
 // ProcessJsonFile runs the full JSON ingestion pipeline synchronously.

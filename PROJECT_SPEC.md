@@ -52,7 +52,7 @@ Accept CSV and JSON file uploads. On upload, the backend:
 
 - Streams the file rather than loading it entirely into memory, allowing large file handling without excessive memory consumption.
 - Detects column types automatically (numeric, categorical, datetime, boolean).
-- Validates rows and flags malformed entries, missing values, and type mismatches.
+- Validates rows and flags malformed entries, missing values, and type mismatches. Cells that fail validation (`missing_value`, `type_mismatch`) are stored as NULL; the original error is recorded in `dataset_validation_errors`. Rows that fail at the row level (`malformed_row`, e.g. column-count mismatch in CSV) are dropped entirely.
 - Stores both the raw file on disk and the parsed/structured representation in PostgreSQL.
 - Processes ingestion through a concurrent pipeline — parsing, validation, and storage run as composable stages connected via channels.
 

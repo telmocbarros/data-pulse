@@ -20,6 +20,7 @@ package dataset
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -161,18 +162,37 @@ Eve,50,
 
 	// Assertion 3: dynamic table has 4 rows.
 	// Alice: valid -> stored.
-	// Bob: type_mismatch on age but the row is still forwarded (the
-	//   error logged separately) -> stored.
-	// charlie: missing_value on name; the empty cell is skipped via
-	//   the sparse-map convention but the row is still stored.
-	// Diana: malformed_row count mismatch -> DROPPED by csvSource.
-	// Eve: missing_value on email; row stored sparse.
+	// Bob: type_mismatch on age (string in a Numerical column). The
+	//   validator NULLs the bad cell but keeps the row, so it is stored
+	//   with age IS NULL — the type_mismatch is logged separately.
+	// charlie: missing_value on name; cell stored as NULL.
+	// Diana: malformed_row (count mismatch) -> DROPPED by csvSource.
+	// Eve: missing_value on email; cell stored as NULL.
 	tableName := dynamicTableName(t, datasetId)
 	if got := countRows(t, tableName); got != 4 {
 		t.Errorf("%s row count = %d, want 4 (Diana should be dropped)", tableName, got)
 	}
 
-	// Assertion 4: validation errors per kind.
+	// Assertion 4: Bob's row must have age=NULL in the dynamic table.
+	// This is the pin for the "type_mismatch cells are NULL'd, not
+	// crashed" contract. Before the fix, sending the string to a
+	// DOUBLE PRECISION column would have rolled back the entire
+	// transaction and stored 0 rows.
+	if !sqlsafe.IsValidIdentifier(tableName) {
+		t.Fatalf("invalid table name: %q", tableName)
+	}
+	var bobAge sql.NullFloat64
+	err = config.Storage.QueryRow(
+		fmt.Sprintf("SELECT age FROM %s WHERE name = $1", tableName), "Bob",
+	).Scan(&bobAge)
+	if err != nil {
+		t.Fatalf("query Bob row: %v", err)
+	}
+	if bobAge.Valid {
+		t.Errorf("Bob's age = %v, want NULL (type_mismatch should have NULL'd it)", bobAge.Float64)
+	}
+
+	// Assertion 5: validation errors per kind.
 	if got := countErrorsByKind(t, datasetId, "type_mismatch"); got != 1 {
 		t.Errorf("type_mismatch errors = %d, want 1 (Bob's age)", got)
 	}
@@ -217,6 +237,24 @@ func TestJsonPipelineEndToEnd(t *testing.T) {
 	tableName := dynamicTableName(t, datasetId)
 	if got := countRows(t, tableName); got != 4 {
 		t.Errorf("%s row count = %d, want 4", tableName, got)
+	}
+
+	// Pin the new contract: Bob's "not-a-number" age must be stored as
+	// NULL (the validator NULLs the bad cell). Before the fix, sending
+	// the string to a DOUBLE PRECISION column would have rolled back
+	// the entire transaction.
+	if !sqlsafe.IsValidIdentifier(tableName) {
+		t.Fatalf("invalid table name: %q", tableName)
+	}
+	var bobAge sql.NullFloat64
+	err = config.Storage.QueryRow(
+		fmt.Sprintf("SELECT age FROM %s WHERE name = $1", tableName), "Bob",
+	).Scan(&bobAge)
+	if err != nil {
+		t.Fatalf("query Bob row: %v", err)
+	}
+	if bobAge.Valid {
+		t.Errorf("Bob's age = %v, want NULL", bobAge.Float64)
 	}
 
 	if got := countErrorsByKind(t, datasetId, "type_mismatch"); got != 1 {
